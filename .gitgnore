@@ -1,0 +1,36 @@
+# Ignore Terraform directories and state files
+.terraform/
+*.tfstate
+*.tfstate.backup
+*.tfvars
+!terraform.tfvars.example  # Allow an example file
+
+# Ignore Jenkins-related files
+jenkins_home/
+secrets/
+config.xml
+*.log
+
+# Ignore SSH keys and credentials
+id_rsa
+id_rsa.pub
+*.pem
+*.key
+
+
+# Ignore large files and binaries
+*.zip
+*.tar.gz
+*.exe
+*.iso
+*.dmg
+*.jar
+
+# Ignore VS Code and JetBrains settings
+.vscode/
+.idea/
+*.iml
+
+# Ignore OS-specific files
+.DS_Store
+Thumbs.db
