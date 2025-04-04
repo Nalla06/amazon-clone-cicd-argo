@@ -1,0 +1,23 @@
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: amazon-clone-app
+  labels:
+    app: amazon-clone-app
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: amazon-clone-app
+  template:
+    metadata:
+      labels:
+        app: amazon-clone-app
+    spec:
+      containers:
+      - name: amazon-clone-container
+        image: 309395755719.dkr.ecr.us-east-1.amazonaws.com/amazon-prime:latest
+        ports:
+        - containerPort: 3000
+...
