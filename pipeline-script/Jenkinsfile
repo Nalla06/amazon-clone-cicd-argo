@@ -1,111 +1,194 @@
 pipeline {
     agent any
     
-    parameters {
-        string(name: 'ECR_REPO_NAME', defaultValue: 'amazon-prime', description: 'Enter repository name')
-        string(name: 'AWS_ACCOUNT_ID', defaultValue: '631172387421', description: 'Enter AWS Account ID') // Added missing quote
-    }
-    
-    tools {
-        jdk 'JDK'
-        nodejs 'NodeJS'
-    }
-    
     environment {
-        SCANNER_HOME = tool 'SonarQube Scanner'
+        // Configure your environment variables
+        AWS_REGION = 'us-east-1'
+        ECR_REPOSITORY = 'amazon-clone'
+        IMAGE_NAME = 'amazon-clone'
+        SONAR_PROJECT_KEY = 'amazon-clone'
+        SONAR_SERVER_URL = 'http://107.22.19.164:9000'
+        KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/k8s-manifests.git'
+        KUBERNETES_MANIFEST_PATH = 'k8s-manifests/deployment.yml'
+        EKS_CLUSTER_NAME = 'amazon-cluster'
+        GIT_CREDENTIALS_ID = 'github-credentials'
+        AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
     }
-    
+
     stages {
-        stage('1. Git Checkout') {
+        stage('Git Checkout') {
             steps {
-                git branch: 'main', url: 'https://github.com/pandacloud1/DevopsProject2.git'
+                // Checkout your application code
+                checkout scm
+                
+                // Checkout your Kubernetes manifests repository
+                dir('k8s-manifests') {
+                    git branch: 'main', 
+                        credentialsId: env.GIT_CREDENTIALS_ID, 
+                        url: env.KUBERNETES_MANIFEST_REPO
+                }
+            }
+        }
+
+        stage('Install Dependencies') {
+            steps {
+                // Install npm dependencies
+                sh 'npm ci'
             }
         }
         
-        stage('2. SonarQube Analysis') {
+        stage('Code Quality Analysis') {
+    steps {
+        withSonarQubeEnv('SonarQube') {
+            sh """
+                sonar-scanner \
+                  -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
+                  -Dsonar.sources=. \
+                  -Dsonar.host.url=${env.SONAR_SERVER_URL} \
+                  -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+            """
+        }
+    }
+
+        
+        stage('Quality Gate') {
             steps {
-                withSonarQubeEnv ('sonar-server') {
-                    sh """
-                    $SCANNER_HOME/bin/sonar-scanner \
-                    -Dsonar.projectName=amazon-prime \
-                    -Dsonar.projectKey=amazon-prime
-                    """
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
         
-        stage('3. Quality Gate') {
+        stage('Build Application') {
             steps {
-                waitForQualityGate abortPipeline: false, 
-                credentialsId: 'sonar-token'
+                // Build your application (for npm-based apps)
+                sh 'npm run build'
             }
         }
         
-        stage('4. Install npm') {
+        stage('Create ECR Repository') {
             steps {
-                sh "npm install"
-            }
-        }
-        
-        stage('5. Trivy Scan') {
-            steps {
-                sh "trivy fs . > trivy.txt"
-            }
-        }
-        
-        stage('6. Build Docker Image') {
-            steps {
-                sh "docker build -t ${params.ECR_REPO_NAME} ."
-            }
-        }
-        
-        stage('7. Create ECR repo') {
-            steps {
-                withCredentials([string(credentialsId: 'access-key', variable: 'AWS_ACCESS_KEY'), 
-                                 string(credentialsId: 'secret-key', variable: 'AWS_SECRET_KEY')]) {
-                    sh """
-                    aws configure set aws_access_key_id $AWS_ACCESS_KEY
-                    aws configure set aws_secret_access_key $AWS_SECRET_KEY
-                    aws ecr describe-repositories --repository-names ${params.ECR_REPO_NAME} --region us-east-1 || \
-                    aws ecr create-repository --repository-name ${params.ECR_REPO_NAME} --region us-east-1
-                    """
+                withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
+                    script {
+                        // Check if ECR repository exists, create if it doesn't
+                        def repoExists = sh(
+                            script: "aws ecr describe-repositories --repository-names ${env.ECR_REPOSITORY} || echo 'not found'",
+                            returnStdout: true
+                        ).contains(env.ECR_REPOSITORY)
+                        
+                        if (!repoExists) {
+                            echo "Creating ECR repository: ${env.ECR_REPOSITORY}"
+                            sh "aws ecr create-repository --repository-name ${env.ECR_REPOSITORY} --image-scanning-configuration scanOnPush=true"
+                        } else {
+                            echo "ECR repository ${env.ECR_REPOSITORY} already exists"
+                        }
+                        
+                        // Get the repository URI
+                        env.ECR_URL = sh(
+                            script: "aws ecr describe-repositories --repository-names ${env.ECR_REPOSITORY} --query 'repositories[0].repositoryUri' --output text",
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Remove repository name from the URL to get just the registry URL
+                        env.ECR_REGISTRY = sh(
+                            script: "echo ${env.ECR_URL} | cut -d/ -f1",
+                            returnStdout: true
+                        ).trim()
+                        
+                        env.IMAGE_TAG = "${env.BUILD_NUMBER}"
+                        env.FULL_IMAGE_NAME = "${env.ECR_URL}:${env.IMAGE_TAG}"
+                    }
                 }
             }
         }
         
-        stage('8. Login to ECR & tag image') {
+        stage('Docker Build') {
             steps {
-                withCredentials([string(credentialsId: 'access-key', variable: 'AWS_ACCESS_KEY'), 
-                                 string(credentialsId: 'secret-key', variable: 'AWS_SECRET_KEY')]) {
-                    sh """
-                    aws ecr get-login-password --region us-east-1 | docker login --username AWS --password-stdin ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com
-                    docker tag ${params.ECR_REPO_NAME} ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:${BUILD_NUMBER}
-                    docker tag ${params.ECR_REPO_NAME} ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:latest
-                    """
+                script {
+                    // Build Docker image
+                    sh "docker build -t ${env.FULL_IMAGE_NAME} ."
                 }
             }
         }
         
-        stage('9. Push image to ECR') {
+        stage('Trivy Security Scan') {
             steps {
-                withCredentials([string(credentialsId: 'access-key', variable: 'AWS_ACCESS_KEY'), 
-                                 string(credentialsId: 'secret-key', variable: 'AWS_SECRET_KEY')]) {
-                    sh """
-                    docker push ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:${BUILD_NUMBER}
-                    docker push ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:latest
-                    """
-                }
-            }
-        }
-        
-        stage('10. Cleanup Images') {
-            steps {
+                // Run Trivy vulnerability scanner on the Docker image
                 sh """
-                docker rmi ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:${BUILD_NUMBER}
-                docker rmi ${params.AWS_ACCOUNT_ID}.dkr.ecr.us-east-1.amazonaws.com/${params.ECR_REPO_NAME}:latest
-		docker images
+                    trivy image --severity HIGH,CRITICAL --no-progress ${env.FULL_IMAGE_NAME}
                 """
             }
+        }
+        
+        stage('Push to ECR') {
+            steps {
+                withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
+                    // Login to ECR
+                    sh "aws ecr get-login-password --region ${env.AWS_REGION} | docker login --username AWS --password-stdin ${env.ECR_REGISTRY}"
+                    
+                    // Push the image to ECR
+                    sh "docker push ${env.FULL_IMAGE_NAME}"
+                    
+                    // Tag as latest for easier reference
+                    sh "docker tag ${env.FULL_IMAGE_NAME} ${env.ECR_URL}:latest"
+                    sh "docker push ${env.ECR_URL}:latest"
+                }
+            }
+        }
+        
+        stage('Configure kubectl') {
+            steps {
+                withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
+                    // Update kubeconfig to point to your EKS cluster
+                    sh "aws eks update-kubeconfig --name ${env.EKS_CLUSTER_NAME} --region ${env.AWS_REGION}"
+                }
+            }
+        }
+        
+        stage('Update Kubernetes Manifest') {
+            steps {
+                dir('k8s-manifests') {
+                    script {
+                        // Update the image in the Kubernetes manifest
+                        sh """
+                            sed -i 's|image: ${env.ECR_URL}:.*|image: ${env.ECR_URL}:${env.IMAGE_TAG}|' ${env.KUBERNETES_MANIFEST_PATH}
+                        """
+                        
+                        // Commit and push the updated manifest
+                        withCredentials([usernamePassword(credentialsId: env.GIT_CREDENTIALS_ID, passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                            sh """
+                                git config user.email 'lakshmi.rajyam06@gmail.com'
+                                git config user.name 'Nalla06'
+                                git add ${env.KUBERNETES_MANIFEST_PATH}
+                                git commit -m "Update image to ${env.IMAGE_TAG} [ci skip]"
+                                git push https://${GIT_USERNAME}:${GIT_PASSWORD}@${env.KUBERNETES_MANIFEST_REPO.replace('https://', '')} HEAD:main
+                            """
+                        }
+                    }
+                }
+            }
+        }
+    }
+    
+    post {
+        always {
+            // Clean up Docker images to save disk space
+            sh "docker rmi ${env.FULL_IMAGE_NAME} || true"
+            sh "docker rmi ${env.ECR_URL}:latest || true"
+            
+            // Notify team about build results
+            emailext (
+                subject: "Pipeline Status: ${currentBuild.fullDisplayName}",
+                body: """
+                    Pipeline Status: ${currentBuild.result}
+                    Build URL: ${env.BUILD_URL}
+                    
+                    New image deployed: ${env.FULL_IMAGE_NAME}
+                    
+                    ArgoCD should now detect changes and sync automatically.
+                """,
+                to: 'your-team@example.com'
+            )
         }
     }
 }

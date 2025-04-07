@@ -26,7 +26,7 @@ sudo apt-get update -y
 sudo apt-get install -y docker-ce docker-ce-cli containerd.io
 sudo systemctl enable docker
 sudo systemctl start docker
-sudo usermod -aG docker ubuntu
+sudo usermod -aG docker $(whoami)
 
 # Install Docker Compose
 echo "Installing Docker Compose..."
@@ -69,7 +69,77 @@ wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scann
 unzip sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip
 sudo mv sonar-scanner-${SONAR_SCANNER_VERSION}-linux /opt/sonar-scanner
 echo 'export PATH=$PATH:/opt/sonar-scanner/bin' | sudo tee -a /etc/profile.d/sonar-scanner.sh
+source /etc/profile.d/sonar-scanner.sh
 rm sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip
+
+# Install SonarQube Server using Docker (easier to maintain)
+echo "Installing SonarQube Server using Docker..."
+# Create necessary directories
+sudo mkdir -p /opt/sonarqube/data
+sudo mkdir -p /opt/sonarqube/logs
+sudo mkdir -p /opt/sonarqube/extensions
+
+# Set permissions for SonarQube directories
+sudo chown -R 1000:1000 /opt/sonarqube
+
+# Create docker-compose.yml for SonarQube
+cat <<EOF | sudo tee /opt/sonarqube/docker-compose.yml
+version: '3'
+services:
+  sonarqube:
+    image: sonarqube:latest
+    container_name: sonarqube
+    ports:
+      - "9000:9000"
+    networks:
+      - sonarnet
+    environment:
+      - SONAR_JDBC_URL=jdbc:postgresql://sonarqube-db:5432/sonar
+      - SONAR_JDBC_USERNAME=sonar
+      - SONAR_JDBC_PASSWORD=sonar
+    volumes:
+      - /opt/sonarqube/data:/opt/sonarqube/data
+      - /opt/sonarqube/logs:/opt/sonarqube/logs
+      - /opt/sonarqube/extensions:/opt/sonarqube/extensions
+    restart: always
+    depends_on:
+      - sonarqube-db
+  
+  sonarqube-db:
+    image: postgres:13
+    container_name: sonarqube-db
+    networks:
+      - sonarnet
+    environment:
+      - POSTGRES_USER=sonar
+      - POSTGRES_PASSWORD=sonar
+      - POSTGRES_DB=sonar
+    volumes:
+      - postgresql_data:/var/lib/postgresql/data
+    restart: always
+
+networks:
+  sonarnet:
+    driver: bridge
+
+volumes:
+  postgresql_data:
+EOF
+
+# Configure kernel settings required by SonarQube
+echo "Configuring system settings for SonarQube..."
+cat <<EOF | sudo tee -a /etc/sysctl.conf
+vm.max_map_count=262144
+fs.file-max=65536
+EOF
+sudo sysctl -p
+
+# Configure SonarQube Scanner to use your SonarQube server
+echo "sonar.host.url=http://localhost:9000" | sudo tee -a /opt/sonar-scanner/conf/sonar-scanner.properties
+
+# Start SonarQube
+echo "Starting SonarQube..."
+cd /opt/sonarqube && sudo docker-compose up -d
 
 # Install Trivy
 echo "Installing Trivy..."
@@ -89,7 +159,7 @@ sudo mv prometheus-${PROMETHEUS_VERSION}.linux-amd64/consoles prometheus-${PROME
 rm -rf prometheus-${PROMETHEUS_VERSION}.linux-amd64*
 
 # Create a Prometheus user
-sudo useradd --no-create-home --shell /bin/false prometheus
+sudo useradd --no-create-home --shell /bin/false prometheus || true
 sudo chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus
 
 # Create Prometheus service
@@ -128,6 +198,12 @@ scrape_configs:
     metrics_path: '/prometheus'
     static_configs:
       - targets: ['localhost:8080']
+      
+  - job_name: 'sonarqube'
+    scrape_interval: 10s
+    metrics_path: '/api/monitoring/metrics'
+    static_configs:
+      - targets: ['localhost:9000']
 EOF
 
 sudo chown prometheus:prometheus /etc/prometheus/prometheus.yml
@@ -263,6 +339,58 @@ EOF
 
 sudo chmod +x /opt/create-jenkins-agent-container.sh
 
+# Create SonarQube Jenkins integration script
+echo "Creating SonarQube Jenkins integration script..."
+cat <<EOF | sudo tee /opt/configure-sonarqube-jenkins.sh
+#!/bin/bash
+
+# Wait for SonarQube to be fully up and running
+echo "Waiting for SonarQube to become available..."
+timeout 300 bash -c 'until curl -s -f http://localhost:9000/api/system/status | grep -q "UP"; do echo "Waiting for SonarQube..."; sleep 10; done'
+echo "SonarQube is up and running!"
+
+# Get Jenkins admin password
+JENKINS_ADMIN_PASSWORD=\$(sudo cat /var/lib/jenkins/secrets/initialAdminPassword)
+
+# Generate SonarQube token
+echo "Generating SonarQube token for Jenkins integration..."
+# Default admin credentials for SonarQube
+SONAR_USER="admin"
+SONAR_PASSWORD="admin"
+
+# Login to get cookies for authentication
+curl -X POST -c /tmp/cookies.txt "http://localhost:9000/api/authentication/login" \
+  -d "login=\${SONAR_USER}&password=\${SONAR_PASSWORD}"
+
+# Generate token with cookies
+TOKEN_RESPONSE=\$(curl -s -X POST -b /tmp/cookies.txt "http://localhost:9000/api/user_tokens/generate" \
+  -d "name=jenkins-integration&login=admin")
+
+# Extract token from response
+SONAR_TOKEN=\$(echo \$TOKEN_RESPONSE | grep -o '"token":"[^"]*' | awk -F':' '{print \$2}' | tr -d '"')
+
+if [ -z "\$SONAR_TOKEN" ]; then
+  echo "Failed to get SonarQube token. You may need to create one manually."
+  echo "Go to SonarQube > My Account > Security > Generate Token"
+else
+  echo "SonarQube token generated: \$SONAR_TOKEN"
+  
+  # Create a file with SonarQube server and token info for Jenkins setup
+  cat <<EOG | sudo tee /var/lib/jenkins/sonarqube-info.txt
+SonarQube URL: http://localhost:9000
+SonarQube Token: \$SONAR_TOKEN
+EOG
+  sudo chown jenkins:jenkins /var/lib/jenkins/sonarqube-info.txt
+  
+  echo "SonarQube information saved to /var/lib/jenkins/sonarqube-info.txt"
+  echo "Use this token when configuring the SonarQube Scanner in Jenkins"
+fi
+
+rm -f /tmp/cookies.txt
+EOF
+
+sudo chmod +x /opt/configure-sonarqube-jenkins.sh
+
 # Install additional Jenkins plugins
 echo "Installing Jenkins plugins..."
 sudo mkdir -p /var/lib/jenkins/init.groovy.d/
@@ -277,7 +405,7 @@ def logger = Logger.getLogger("")
 def installed = false
 def initialized = false
 
-def pluginParameter = "blueocean docker-workflow pipeline-github-lib git terraform sonar aws-credentials amazon-ecr prometheus ssh-slaves docker-plugin metrics"
+def pluginParameter = "blueocean docker-workflow pipeline-github-lib git terraform sonar sonarqube-scanner aws-credentials amazon-ecr prometheus ssh-slaves docker-plugin metrics"
 def plugins = pluginParameter.split()
 
 logger.info("Downloading and installing plugins")
@@ -291,69 +419,4 @@ plugins.each { plugin ->
     logger.info("Installing \${plugin}")
     def installFuture = uc.getPlugin(plugin).deploy()
     while(!installFuture.isDone()) {
-      logger.info("Waiting for plugin \${plugin} to be installed")
-      Thread.sleep(3000)
-    }
-  }
-}
-
-instance.save()
-logger.info("Plugin installation complete.")
-EOF
-
-sudo chown jenkins:jenkins /var/lib/jenkins/init.groovy.d/install-plugins.groovy
-
-# Configure Jenkins global security
-cat <<EOF | sudo tee /var/lib/jenkins/init.groovy.d/security.groovy
-import jenkins.model.*
-import hudson.security.*
-import jenkins.security.s2m.AdminWhitelistRule
-
-def instance = Jenkins.getInstance()
-
-// Enable agent to master access control
-instance.getInjector().getInstance(AdminWhitelistRule.class).setMasterKillSwitch(false)
-
-// Disable JNLP (not using JNLP)
-instance.setSlaveAgentPort(0)
-
-instance.save()
-EOF
-
-sudo chown jenkins:jenkins /var/lib/jenkins/init.groovy.d/security.groovy
-
-# Restart Jenkins to apply changes
-sudo systemctl restart jenkins
-
-# Final setup and permissions
-echo "Finalizing setup..."
-sudo chown -R ubuntu:ubuntu /home/ubuntu
-
-# Print installation summary
-echo "==================================================================="
-echo "Installation complete! The following tools are now available:"
-echo "- GitHub (git client)"
-echo "- Jenkins (with agent node capability)"
-echo "- SonarQube Scanner"
-echo "- Aqua Trivy"
-echo "- Docker"
-echo "- AWS CLI"
-echo "- Terraform"
-echo "- Prometheus & Grafana"
-echo "==================================================================="
-echo ""
-echo "Access URLs:"
-echo "- Jenkins: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):8080"
-echo "- Prometheus: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):9090"
-echo "- Grafana: http://$(curl -s http://169.254.169.254/latest/meta-data/public-ipv4):3000"
-echo ""
-echo "Jenkins initial admin password:"
-sudo cat /var/lib/jenkins/secrets/initialAdminPassword
-echo ""
-echo "==================================================================="
-echo "To set up a Jenkins agent node, use:"
-echo "sudo /opt/setup-jenkins-node.sh <node-name> <node-description> <executors>"
-echo ""
-echo "To create a Docker-based Jenkins agent, use:"
-echo "sudo /opt/create-jenkins-agent-container.sh <node-name> <executors>"
-echo "==================================================================="
+      logger.info("

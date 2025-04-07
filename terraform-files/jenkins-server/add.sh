@@ -1,7 +1,7 @@
 #!/bin/bash
 
-# Determine AWS region
-REGION=$(curl -s --connect-timeout 5 http://169.254.169.254/latest/meta-data/placement/region || echo "us-east-1")
+# Define the AWS region
+REGION="us-east-1"
 export AWS_DEFAULT_REGION=$REGION
 export AWS_REGION=$REGION
 
@@ -9,30 +9,15 @@ echo "Using AWS region: $AWS_REGION"
 
 # Configuration
 JENKINS_URL="http://localhost:8080"
+JENKINS_CLI="/tmp/jenkins-cli.jar"
 
-# Wait for Jenkins to be fully up and running
-echo "Waiting for Jenkins to become available..."
-timeout 300 bash -c 'until curl -s -f http://localhost:8080 > /dev/null; do sleep 5; done'
-
-# Get Jenkins admin password
-JENKINS_ADMIN_PASSWORD=$(sudo cat /var/lib/jenkins/secrets/initialAdminPassword)
-echo "Jenkins admin password retrieved"
+# Jenkins admin credentials
+JENKINS_ADMIN_USERNAME="admin"
+JENKINS_ADMIN_PASSWORD="admin"  # Replace with your Jenkins admin password
 
 # Download Jenkins CLI
 echo "Downloading Jenkins CLI..."
-wget -q "$JENKINS_URL/jnlpJars/jenkins-cli.jar" -O /tmp/jenkins-cli.jar
-
-# Install necessary Jenkins plugins
-echo "Installing required Jenkins plugins..."
-java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s $JENKINS_URL install-plugin credentials credentials-binding plain-credentials aws-credentials docker-workflow workflow-aggregator git
-
-echo "Restarting Jenkins to apply plugins..."
-java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s $JENKINS_URL safe-restart
-
-echo "Waiting for Jenkins to restart..."
-sleep 60
-timeout 300 bash -c "until curl -s -f $JENKINS_URL > /dev/null; do sleep 5; done"
-echo "Jenkins is back online"
+wget -q "$JENKINS_URL/jnlpJars/jenkins-cli.jar" -O $JENKINS_CLI
 
 # Retrieve credentials from AWS Parameter Store
 echo "Retrieving credentials from AWS Parameter Store..."
@@ -55,9 +40,12 @@ import com.cloudbees.jenkins.plugins.awscredentials.*
 import org.jenkinsci.plugins.plaincredentials.impl.*
 import hudson.util.Secret
 
+// Get Jenkins instance
+def jenkins = Jenkins.get() 
+
 // Get credentials store
 def domain = Domain.global()
-def store = Jenkins.instance.getExtensionList('com.cloudbees.plugins.credentials.SystemCredentialsProvider')[0].getStore()
+def store = jenkins.getExtensionList('com.cloudbees.plugins.credentials.SystemCredentialsProvider')[0].getStore()
 
 // Create GitHub credentials
 def githubCredentials = new UsernamePasswordCredentialsImpl(
@@ -86,13 +74,15 @@ def dockerCredentials = new UsernamePasswordCredentialsImpl(
 )
 
 // Create AWS ECR credentials
+// Using the correct constructor for AWSCredentialsImpl
 def awsCredentials = new AWSCredentialsImpl(
   CredentialsScope.GLOBAL,
   "aws-ecr-credentials",
   "AWS Credentials for ECR",
   "$AWS_ACCESS_KEY",
   "$AWS_SECRET_KEY",
-  ""
+  "",  // IAM Role to use (empty for using access/secret keys)
+  ""   // Description (optional)
 )
 
 // Add all credentials to store
@@ -106,14 +96,19 @@ EOF
 
 # Execute Groovy script to add credentials
 echo "Adding credentials to Jenkins..."
-cat /tmp/add-credentials.groovy | java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s $JENKINS_URL groovy =
+java -jar $JENKINS_CLI -auth $JENKINS_ADMIN_USERNAME:$JENKINS_ADMIN_PASSWORD -s $JENKINS_URL groovy = < /tmp/add-credentials.groovy
 
-# Verify credentials were added
+# Verify credentials
 echo "Verifying credentials..."
-cat << 'EOF' | java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s $JENKINS_URL groovy =
-def creds = com.cloudbees.plugins.credentials.CredentialsProvider.lookupCredentials(
-  com.cloudbees.plugins.credentials.common.StandardCredentials.class,
-  Jenkins.instance
+cat << 'EOF' | java -jar $JENKINS_CLI -auth $JENKINS_ADMIN_USERNAME:$JENKINS_ADMIN_PASSWORD -s $JENKINS_URL groovy =
+import jenkins.model.Jenkins
+import com.cloudbees.plugins.credentials.CredentialsProvider
+import com.cloudbees.plugins.credentials.common.StandardCredentials
+
+def jenkins = Jenkins.get()
+def creds = CredentialsProvider.lookupCredentials(
+  StandardCredentials.class,
+  jenkins
 )
 println("Found ${creds.size()} credentials:")
 creds.each { c -> println("- ID: ${c.id}, Description: ${c.description}") }
@@ -121,6 +116,6 @@ EOF
 
 # Clean up
 echo "Cleaning up temporary files..."
-rm /tmp/jenkins-cli.jar /tmp/add-credentials.groovy
+rm $JENKINS_CLI /tmp/add-credentials.groovy
 
 echo "Jenkins credentials setup complete!"
