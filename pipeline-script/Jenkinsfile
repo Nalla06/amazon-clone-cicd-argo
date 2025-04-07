@@ -38,18 +38,18 @@ pipeline {
         }
         
         stage('Code Quality Analysis') {
-    steps {
-        withSonarQubeEnv('SonarQube') {
-            sh """
-                sonar-scanner \
-                  -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
-                  -Dsonar.sources=. \
-                  -Dsonar.host.url=${env.SONAR_SERVER_URL} \
-                  -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-            """
-        }
-    }
-
+            steps {
+                withSonarQubeEnv('SonarQube') {
+                    sh """
+                        sonar-scanner \
+                          -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
+                          -Dsonar.sources=. \
+                          -Dsonar.host.url=${env.SONAR_SERVER_URL} \
+                          -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+                    """
+                }
+            }
+        }  // <-- This is the missing closing brace
         
         stage('Quality Gate') {
             steps {
