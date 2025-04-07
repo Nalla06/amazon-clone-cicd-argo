@@ -4,7 +4,7 @@
 This project showcases a fully automated CI/CD pipeline for deploying an Amazon Clone Application using Jenkins, Docker, Kubernetes (EKS), ArgoCD, and AWS services. It also integrates monitoring, logging, and security best practices.
 
 # Your Pipeline Overview
-![Image 1](images/image-01.png).
+![Image 1](images/image-01.jpg).
 ![Image 2](images/image-02.png).
 
 
