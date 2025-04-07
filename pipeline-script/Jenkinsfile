@@ -20,13 +20,6 @@ pipeline {
             steps {
                 // Checkout your application code
                 checkout scm
-                
-                // Checkout your Kubernetes manifests repository
-                dir('k8s-manifests') {
-                    git branch: 'main', 
-                        credentialsId: env.GIT_CREDENTIALS_ID, 
-                        url: env.KUBERNETES_MANIFEST_REPO
-                }
             }
         }
 
