@@ -3,7 +3,7 @@
 ## End-to-End CI/CD Pipeline for an Amazon Clone Project
 This project showcases a fully automated CI/CD pipeline for deploying an Amazon Clone Application using Jenkins, Docker, Kubernetes (EKS), ArgoCD, and AWS services. It also integrates monitoring, logging, and security best practices.
 # Your Pipeline Overview
-![Devops](images/amazon-clone.png)
+![Devops](images/image1.png)
 
 
 
