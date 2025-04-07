@@ -1,9 +1,11 @@
-# Ignore Terraform directories and state files
+# Ignore Terraform-generated files
 .terraform/
 *.tfstate
 *.tfstate.backup
+terraform.tfstate.d/
 *.tfvars
-!terraform.tfvars.example  # Allow an example file
+!terraform.tfvars.example
+
 
 # Ignore Jenkins-related files
 jenkins_home/
