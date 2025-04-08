@@ -13,6 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' 
     }
 
     stages {
@@ -34,19 +35,32 @@ pipeline {
         }
 
         stage('Code Quality Analysis') {
+            environment {
+                PATH = "${env.PATH}:/opt/sonar-scanner/bin"
+                
+            }
             steps {
                 script {
-                    docker.image('sonarsource/sonar-scanner-cli:latest').inside {
+                    sh '''
+                        if command -v sonar-scanner > /dev/null; then
+                            echo "sonar-scanner found at $(which sonar-scanner)"
+                            sonar-scanner --version
+                        else
+                            echo "sonar-scanner not found in PATH, please install it"
+                            exit 1
+                        fi
+                    '''
+                    withSonarQubeEnv('SonarQube') {
                         sh """
                             sonar-scanner \\
                                 -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
                                 -Dsonar.sources=. \\
                                 -Dsonar.host.url=${SONAR_SERVER_URL} \\
                                 -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
-                            """
-                        }
+                        """
                     }
                 }
+            }
         }
 
         stage('Quality Gate') {
