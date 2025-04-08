@@ -59,16 +59,12 @@ pipeline {
                                 -Dsonar.sources=. \\
                                 -Dsonar.host.url=${SONAR_SERVER_URL} \\
                                 -Dsonar.login=${SONAR_TOKEN} || echo "SonarQube scan failed, but continuing pipeline..."
-                                
                         """
                     }
-                }catch (Exception e) {
-                echo "SonarQube analysis failed: ${e.message}"
-                echo "Continuing pipeline despite SonarQube failure..."
+                }
             }
         }
 
-        
         stage('Build Application') {
             steps {
                 sh 'npm run build || echo "Build warnings detected"'
