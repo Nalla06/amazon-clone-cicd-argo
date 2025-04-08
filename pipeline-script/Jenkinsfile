@@ -44,33 +44,34 @@ pipeline {
             }
         }
         stage('Code Quality Analysis') {
-            steps {
-                script {
-                    // Check if sonar-scanner is installed
-                    sh '''
-                        if ! command -v sonar-scanner &> /dev/null; then
-                            echo "sonar-scanner not found in PATH"
-                            export PATH=$PATH:/opt/sonar-scanner/bin
-                            if ! command -v sonar-scanner &> /dev/null; then
-                                echo "sonar-scanner still not found, please check installation"
-                                exit 1
-                            fi
-                        fi
-                    '''
-                    
-                    withSonarQubeEnv('SonarQube') {
-                        sh """
-                            sonar-scanner \
-                              -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \
-                              -Dsonar.sources=. \
-                              -Dsonar.host.url=${env.SONAR_SERVER_URL} \
-                              -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "SonarQube analysis completed with warnings"
-                        """
+    steps {
+        script {
+            // Check if sonar-scanner is installed
+            sh '''
+                # Add the sonar-scanner to PATH if it's not already there
+                export PATH=$PATH:/opt/sonar-scanner/bin
+                
+                if ! command -v sonar-scanner &> /dev/null; then
+                    echo "sonar-scanner not found in PATH, please install it"
+                    exit 1
+                else
+                    echo "sonar-scanner found at $(which sonar-scanner)"
+                    sonar-scanner --version
+                fi
+            '''
+            
+            withSonarQubeEnv('SonarQube') {
+                sh """
+                    sonar-scanner \\
+                      -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \\
+                      -Dsonar.sources=. \\
+                      -Dsonar.host.url=${env.SONAR_SERVER_URL} \\
+                      -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "SonarQube analysis completed with warnings"
+                """
                     }
                 }
             }
         }
-        
         stage('Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
