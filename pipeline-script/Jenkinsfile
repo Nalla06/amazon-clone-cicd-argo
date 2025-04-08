@@ -32,24 +32,17 @@ pipeline {
 
         stage('Install Dependencies') {
             steps {
-                // Check if npm is installed
-                sh '''
-                    if ! command -v npm &> /dev/null; then
-                        echo "npm not found, installing Node.js and npm..."
-                        curl -sL https://deb.nodesource.com/setup_18.x | sudo -E bash -
-                        sudo apt-get install -y nodejs
-                        npm --version
-                    else
-                        echo "npm is already installed"
-                        npm --version
-                    fi
-                '''
-                
-                // Install npm dependencies
-                sh 'npm ci || npm install'
+        // Check if npm is installed
+            sh '''
+                echo "Verifying Node.js and npm installation..."
+                node --version
+                npm --version
+            '''
+        
+        // Install npm dependencies
+            sh 'npm ci || npm install'
             }
         }
-        
         stage('Code Quality Analysis') {
             steps {
                 script {
