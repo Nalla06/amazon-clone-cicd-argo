@@ -26,9 +26,9 @@ pipeline {
         stage('Install Dependencies') {
             steps {
                 sh '''
-                    echo "Node version: $(node --version)"
-                    echo "npm version: $(npm --version)"
-                    npm ci || npm install
+                    echo "Verifying Node.js and npm installation..."
+                    node --version
+                    npm --version
                 '''
             }
         }
