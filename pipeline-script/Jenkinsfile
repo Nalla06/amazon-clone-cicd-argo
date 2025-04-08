@@ -36,6 +36,7 @@ pipeline {
         stage('Code Quality Analysis') {
             environment {
                 PATH = "${env.PATH}:/opt/sonar-scanner/bin"
+                JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' 
             }
             steps {
                 script {
