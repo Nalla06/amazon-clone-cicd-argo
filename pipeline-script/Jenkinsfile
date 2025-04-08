@@ -23,15 +23,9 @@ pipeline {
                 checkout scm
                 // Install Git if not already installed
                 sh '''
-                    if ! command -v git &> /dev/null; then
-                        echo "Git not found, installing..."
-                        sudo apt-get update
-                        sudo apt-get install -y git
-                    else
-                        echo "Git is already installed"
-                        git --version
-                    fi
-                '''
+            echo "Verifying Git installation..."
+            git --version
+        '''
             }
         }
 
