@@ -1,8 +1,7 @@
 pipeline {
     agent any
-    
+
     environment {
-        // Configure your environment variables
         AWS_REGION = 'us-east-1'
         ECR_REPOSITORY = 'amazon-clone'
         IMAGE_NAME = 'amazon-clone'
@@ -19,340 +18,236 @@ pipeline {
     stages {
         stage('Git Checkout') {
             steps {
-                // Checkout your application code
                 checkout scm
-                // Install Git if not already installed
-                sh '''
-            echo "Verifying Git installation..."
-            git --version
-        '''
+                sh 'git --version'
             }
         }
-
 
         stage('Install Dependencies') {
             steps {
-        // Check if npm is installed
-            sh '''
-                echo "Verifying Node.js and npm installation..."
-                node --version
-                npm --version
-            '''
-        
-        // Install npm dependencies
-            sh 'npm ci || npm install'
+                sh '''
+                    echo "Node version: $(node --version)"
+                    echo "npm version: $(npm --version)"
+                    npm ci || npm install
+                '''
             }
         }
+
         stage('Code Quality Analysis') {
-    steps {
-        script {
-            // Check if sonar-scanner is installed
-            sh '''
-                # Add the sonar-scanner to PATH if it's not already there
-                export PATH=$PATH:/opt/sonar-scanner/bin
-                
-                if ! command -v sonar-scanner &> /dev/null; then
-                    echo "sonar-scanner not found in PATH, please install it"
-                    exit 1
-                else
-                    echo "sonar-scanner found at $(which sonar-scanner)"
-                    sonar-scanner --version
-                fi
-            '''
-            
-            withSonarQubeEnv('SonarQube') {
-                sh """
-                    sonar-scanner \\
-                      -Dsonar.projectKey=${env.SONAR_PROJECT_KEY} \\
-                      -Dsonar.sources=. \\
-                      -Dsonar.host.url=${env.SONAR_SERVER_URL} \\
-                      -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info || echo "SonarQube analysis completed with warnings"
-                """
+            environment {
+                PATH = "${env.PATH}:/opt/sonar-scanner/bin"
+            }
+            steps {
+                script {
+                    sh '''
+                        if ! command -v sonar-scanner &> /dev/null; then
+                            echo "sonar-scanner not found"
+                            exit 1
+                        fi
+                    '''
+                    withSonarQubeEnv('SonarQube') {
+                        sh """
+                            sonar-scanner \\
+                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
+                                -Dsonar.sources=. \\
+                                -Dsonar.host.url=${SONAR_SERVER_URL} \\
+                                -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
+                        """
                     }
                 }
             }
         }
+
         stage('Quality Gate') {
             steps {
                 timeout(time: 10, unit: 'MINUTES') {
-                    // Adding error handling for quality gate
                     catchError(buildResult: 'UNSTABLE', stageResult: 'FAILURE') {
                         waitForQualityGate abortPipeline: false
                     }
                 }
             }
         }
-        
+
         stage('Build Application') {
             steps {
-                // Build your application (for npm-based apps)
-                sh 'npm run build || echo "Build may have warnings but continuing"'
+                sh 'npm run build || echo "Build warnings detected"'
             }
         }
-        
+
         stage('Create ECR Repository') {
             steps {
-                withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
+                withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
                     script {
-                        // Check if AWS CLI is installed
                         sh '''
                             if ! command -v aws &> /dev/null; then
-                                echo "AWS CLI not found, installing..."
+                                echo "Installing AWS CLI..."
                                 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
                                 unzip awscliv2.zip
                                 sudo ./aws/install
-                                aws --version
-                            else
-                                echo "AWS CLI is already installed"
-                                aws --version
                             fi
                         '''
-                        
-                        // Check if ECR repository exists, create if it doesn't
-                        def repoExists = sh(
-                            script: "aws ecr describe-repositories --repository-names ${env.ECR_REPOSITORY} 2>&1 || echo 'not found'",
+
+                        def repoOutput = sh(
+                            script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} || true",
                             returnStdout: true
-                        ).contains(env.ECR_REPOSITORY)
-                        
-                        if (!repoExists) {
-                            echo "Creating ECR repository: ${env.ECR_REPOSITORY}"
-                            sh "aws ecr create-repository --repository-name ${env.ECR_REPOSITORY} --image-scanning-configuration scanOnPush=true"
-                        } else {
-                            echo "ECR repository ${env.ECR_REPOSITORY} already exists"
+                        )
+                        if (!repoOutput.contains(ECR_REPOSITORY)) {
+                            sh "aws ecr create-repository --repository-name ${ECR_REPOSITORY} --image-scanning-configuration scanOnPush=true"
                         }
-                        
-                        // Get the repository URI
-                        env.ECR_URL = sh(
-                            script: "aws ecr describe-repositories --repository-names ${env.ECR_REPOSITORY} --query 'repositories[0].repositoryUri' --output text",
-                            returnStdout: true
-                        ).trim()
-                        
-                        // Remove repository name from the URL to get just the registry URL
-                        env.ECR_REGISTRY = sh(
-                            script: "echo ${env.ECR_URL} | cut -d/ -f1",
-                            returnStdout: true
-                        ).trim()
-                        
-                        env.IMAGE_TAG = "${env.BUILD_NUMBER}"
+
+                        env.ECR_URL = sh(script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} --query 'repositories[0].repositoryUri' --output text", returnStdout: true).trim()
+                        env.ECR_REGISTRY = sh(script: "echo ${env.ECR_URL} | cut -d/ -f1", returnStdout: true).trim()
+                        env.IMAGE_TAG = "${BUILD_NUMBER}"
                         env.FULL_IMAGE_NAME = "${env.ECR_URL}:${env.IMAGE_TAG}"
                     }
                 }
             }
         }
-        
+
         stage('Docker Build') {
             steps {
                 script {
-                    // Check if Docker is installed
                     sh '''
                         if ! command -v docker &> /dev/null; then
-                            echo "Docker not found, installing..."
+                            echo "Installing Docker..."
                             sudo apt-get update
-                            sudo apt-get install -y apt-transport-https ca-certificates curl software-properties-common
-                            curl -fsSL https://download.docker.com/linux/ubuntu/gpg | sudo apt-key add -
-                            sudo add-apt-repository "deb [arch=amd64] https://download.docker.com/linux/ubuntu $(lsb_release -cs) stable"
-                            sudo apt-get update
-                            sudo apt-get install -y docker-ce
-                            sudo systemctl enable docker
+                            sudo apt-get install -y docker.io
                             sudo systemctl start docker
-                            sudo usermod -aG docker jenkins
-                            docker --version
-                        else
-                            echo "Docker is already installed"
-                            docker --version
+                            sudo systemctl enable docker
                         fi
                     '''
-                    
-                    // Login to DockerHub for pulling base images if needed
-                    withCredentials([usernamePassword(credentialsId: env.DOCKERHUB_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
+                    withCredentials([usernamePassword(credentialsId: DOCKERHUB_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
                         sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin || true'
                     }
-                    
-                    // Build Docker image
-                    sh "docker build -t ${env.FULL_IMAGE_NAME} ."
+                    sh "docker build -t ${FULL_IMAGE_NAME} ."
                 }
             }
         }
-        
+
         stage('Trivy Security Scan') {
             steps {
-                script {
-                    // Check if Trivy is installed
-                    sh '''
-                        if ! command -v trivy &> /dev/null; then
-                            echo "Trivy not found, installing..."
-                            curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin v0.42.0
-                        else
-                            echo "Trivy is already installed"
-                            trivy --version
-                        fi
-                    '''
-                    
-                    // Run Trivy vulnerability scanner with non-zero exit to warn, not fail
-                    sh """
-                        trivy image --severity HIGH,CRITICAL --no-progress ${env.FULL_IMAGE_NAME} || echo "Trivy found vulnerabilities but continuing"
-                    """
-                }
+                sh '''
+                    if ! command -v trivy &> /dev/null; then
+                        echo "Installing Trivy..."
+                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
+                    fi
+                    trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo "Trivy scan completed with issues"
+                '''
             }
         }
-        
+
         stage('Push to ECR') {
             steps {
-                withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
-                    // Login to ECR
-                    sh "aws ecr get-login-password --region ${env.AWS_REGION} | docker login --username AWS --password-stdin ${env.ECR_REGISTRY}"
-                    
-                    // Push the image to ECR
-                    sh "docker push ${env.FULL_IMAGE_NAME}"
-                    
-                    // Tag as latest for easier reference
-                    sh "docker tag ${env.FULL_IMAGE_NAME} ${env.ECR_URL}:latest"
-                    sh "docker push ${env.ECR_URL}:latest"
+                withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
+                    sh '''
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        docker push ${FULL_IMAGE_NAME}
+                        docker tag ${FULL_IMAGE_NAME} ${ECR_URL}:latest
+                        docker push ${ECR_URL}:latest
+                    '''
                 }
             }
         }
-        
+
         stage('Configure kubectl') {
             steps {
-                script {
-                    // Check if kubectl is installed
+                withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
                     sh '''
                         if ! command -v kubectl &> /dev/null; then
-                            echo "kubectl not found, installing..."
+                            echo "Installing kubectl..."
                             curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
                             chmod +x kubectl
                             sudo mv kubectl /usr/local/bin/
-                            kubectl version --client
-                        else
-                            echo "kubectl is already installed"
-                            kubectl version --client
                         fi
+                        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
+                        kubectl get nodes
                     '''
-                    
-                    withAWS(credentials: env.AWS_CREDENTIALS_ID, region: env.AWS_REGION) {
-                        // Update kubeconfig to point to your EKS cluster
-                        sh "aws eks update-kubeconfig --name ${env.EKS_CLUSTER_NAME} --region ${env.AWS_REGION}"
-                        
-                        // Verify connectivity to the cluster
-                        sh "kubectl get nodes || (echo 'Failed to connect to EKS cluster' && exit 1)"
-                    }
                 }
             }
         }
-        
+
         stage('Clone K8s Manifest Repository') {
             steps {
-                // Clean up existing directory if it exists
-                sh "rm -rf k8s-manifests || true"
-                
-                // Clone the manifest repository
-                withCredentials([usernamePassword(credentialsId: env.GIT_CREDENTIALS_ID, passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
-                    sh """
-                        git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@${env.KUBERNETES_MANIFEST_REPO.replace('https://', '')} k8s-manifests
-                    """
+                sh 'rm -rf k8s-manifests || true'
+                withCredentials([usernamePassword(credentialsId: GIT_CREDENTIALS_ID, passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                    sh "git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@${KUBERNETES_MANIFEST_REPO.replace('https://', '')} k8s-manifests"
                 }
             }
         }
-        
+
         stage('Update Kubernetes Manifest') {
             steps {
                 dir('k8s-manifests') {
                     script {
-                        // Check if the manifest file exists
                         sh """
-                            if [ ! -f "${env.KUBERNETES_MANIFEST_PATH}" ]; then
-                                echo "Kubernetes manifest file not found at ${env.KUBERNETES_MANIFEST_PATH}"
-                                find . -type f -name "*.yml" -o -name "*.yaml" | sort
+                            if [ ! -f "${KUBERNETES_MANIFEST_PATH}" ]; then
+                                echo "Manifest not found!"
+                                find . -name '*.yml' -o -name '*.yaml'
                                 exit 1
                             fi
+
+                            sed -i "s|image: .*${ECR_REPOSITORY}.*|image: ${FULL_IMAGE_NAME}|g" ${KUBERNETES_MANIFEST_PATH}
+
+                            git config user.email 'lakshmi.rajyam06@gmail.com'
+                            git config user.name 'Nalla06'
+                            git add ${KUBERNETES_MANIFEST_PATH}
+                            git commit -m "Update image to ${IMAGE_TAG} [ci skip]" || echo "No changes to commit"
+                            git push https://${GIT_USERNAME}:${GIT_PASSWORD}@${KUBERNETES_MANIFEST_REPO.replace('https://', '')} HEAD:main
                         """
-                        
-                        // Display current image before update
-                        sh "grep -A2 'image:' ${env.KUBERNETES_MANIFEST_PATH} || echo 'Image line not found in manifest'"
-                        
-                        // Update the image in the Kubernetes manifest
-                        sh """
-                            sed -i "s|image: .*${env.ECR_REPOSITORY}.*|image: ${env.FULL_IMAGE_NAME}|g" ${env.KUBERNETES_MANIFEST_PATH}
-                        """
-                        
-                        // Display image after update
-                        sh "grep -A2 'image:' ${env.KUBERNETES_MANIFEST_PATH}"
-                        
-                        // Commit and push the updated manifest
-                        withCredentials([usernamePassword(credentialsId: env.GIT_CREDENTIALS_ID, passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
-                            sh """
-                                git config user.email 'lakshmi.rajyam06@gmail.com'
-                                git config user.name 'Nalla06'
-                                git add ${env.KUBERNETES_MANIFEST_PATH}
-                                git commit -m "Update image to ${env.IMAGE_TAG} [ci skip]" || echo "No changes to commit"
-                                git push https://${GIT_USERNAME}:${GIT_PASSWORD}@${env.KUBERNETES_MANIFEST_REPO.replace('https://', '')} HEAD:main
-                            """
-                        }
                     }
                 }
             }
         }
-    stage('Verify ArgoCD Sync Status') {
+
+        stage('Verify ArgoCD Sync Status') {
             steps {
                 script {
-                    echo "Checking if ArgoCD CLI is available..."
                     sh '''
                         if ! command -v argocd &> /dev/null; then
-                            echo "ArgoCD CLI not found. Cannot verify sync status automatically."
-                            echo "Please check ArgoCD UI to confirm the application has synced successfully."
+                            echo "ArgoCD CLI not found. Please check the ArgoCD UI manually."
                         else
-                            echo "ArgoCD CLI found, attempting to verify sync status..."
-                            # Replace APP_NAME with your ArgoCD application name
-                            # argocd app get APP_NAME --server-plain
-                            # argocd app wait APP_NAME --timeout 300 --server-plain
+                            echo "ArgoCD CLI found. Add your app verification logic here."
+                            # Example:
+                            # argocd app wait amazon-clone --timeout 300
                         fi
                     '''
-                    
-                    echo "ArgoCD should detect the changes in the manifest repository and auto-sync the application."
-                    echo "Check the ArgoCD UI to monitor the sync status."
                 }
             }
         }
     }
-    
+
     post {
         success {
             echo "Pipeline executed successfully!"
         }
-        
+
         failure {
-            echo "Pipeline failed. Please check the logs for more details."
+            echo "Pipeline failed. Check logs for more details."
         }
-        
+
         always {
-            // Clean up Docker images to save disk space
-            sh "docker rmi ${env.FULL_IMAGE_NAME} || true"
-            sh "docker rmi ${env.ECR_URL}:latest || true"
-            
-            // Notify team about build results
+            sh "docker rmi ${FULL_IMAGE_NAME} || true"
+            sh "docker rmi ${ECR_URL}:latest || true"
+
             script {
                 def recipient = 'your-team@example.com'
                 def subject = "Pipeline Status: ${currentBuild.fullDisplayName}"
                 def body = """
-                    Pipeline Status: ${currentBuild.result}
-                    Build URL: ${env.BUILD_URL}
-                    
-                    New image deployed: ${env.FULL_IMAGE_NAME}
-                    
-                    ArgoCD should now detect changes and sync automatically.
+                Pipeline Status: ${currentBuild.result}
+                Build URL: ${env.BUILD_URL}
+                Image: ${FULL_IMAGE_NAME}
+                ArgoCD should auto-sync the changes.
                 """
-                
-                if (emailext) {
+
+                try {
                     emailext (
                         subject: subject,
                         body: body,
                         to: recipient
                     )
-                } else {
-                    echo "Email plugin not available. Would have sent:"
-                    echo "To: ${recipient}"
-                    echo "Subject: ${subject}"
-                    echo "Body: ${body}"
+                } catch (e) {
+                    echo "Email plugin not available or failed. Would have sent:"
+                    echo "To: ${recipient}\nSubject: ${subject}\n${body}"
                 }
             }
         }
