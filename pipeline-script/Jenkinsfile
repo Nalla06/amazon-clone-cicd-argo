@@ -13,7 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
-        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' 
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Ensure Java 17 is used
     }
 
     stages {
@@ -37,7 +37,6 @@ pipeline {
         stage('Code Quality Analysis') {
             environment {
                 PATH = "${env.PATH}:/opt/sonar-scanner/bin"
-                
             }
             steps {
                 script {
@@ -52,7 +51,7 @@ pipeline {
                     '''
                     withSonarQubeEnv('SonarQube') {
                         sh """
-                            sonar-scanner \\
+                            sonar-scanner -X \\
                                 -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
                                 -Dsonar.sources=. \\
                                 -Dsonar.host.url=${SONAR_SERVER_URL} \\
