@@ -40,8 +40,11 @@ pipeline {
             steps {
                 script {
                     sh '''
-                        if ! command -v sonar-scanner &> /dev/null; then
-                            echo "sonar-scanner not found"
+                        if command -v sonar-scanner > /dev/null; then
+                            echo "sonar-scanner found at $(which sonar-scanner)"
+                            sonar-scanner --version
+                        else
+                            echo "sonar-scanner not found in PATH, please install it"
                             exit 1
                         fi
                     '''
