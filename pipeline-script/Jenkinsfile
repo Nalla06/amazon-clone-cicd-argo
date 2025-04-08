@@ -38,6 +38,7 @@ pipeline {
             environment {
                 PATH = "${env.PATH}:/opt/sonar-scanner/bin"
                 JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Ensure Java 17 is used
+                SONAR_TOKEN = credentials('sonarqube-token')
             }
             steps {
                 script {
@@ -56,6 +57,7 @@ pipeline {
                                 -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
                                 -Dsonar.sources=. \\
                                 -Dsonar.host.url=${SONAR_SERVER_URL} \\
+                                -Dsonar.login=${SONAR_TOKEN} \\
                                 -Dsonar.javascript.lcov.reportPaths=coverage/lcov.info
                         """
                     }
