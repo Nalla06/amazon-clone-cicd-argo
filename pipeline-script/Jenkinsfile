@@ -51,7 +51,7 @@ pipeline {
                             exit 1
                         fi
                 // Create an empty test directory to satisfy SonarQube
-                sh "mkdir -p test"    '''
+                sh "mkdir -p test"    // Create an empty test directory
 
                     withSonarQubeEnv('SonarQube') {
                         sh """
