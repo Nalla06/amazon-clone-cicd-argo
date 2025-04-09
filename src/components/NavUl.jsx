@@ -1,6 +1,4 @@
-import React, { useState } from "react";
-import ReactDOM from "react-dom/client";
-
+import React from "react";
 function NavUl(props) {
   // const [className, setClassName] = useState("nav-li");
 
