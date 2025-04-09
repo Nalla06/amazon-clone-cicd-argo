@@ -50,7 +50,9 @@ pipeline {
                             echo "sonar-scanner not found in PATH, please install it"
                             exit 1
                         fi
-                    '''
+                // Create an empty test directory to satisfy SonarQube
+                sh "mkdir -p test"    '''
+
                     withSonarQubeEnv('SonarQube') {
                         sh """
                             sonar-scanner -X \\
@@ -58,9 +60,8 @@ pipeline {
                                 -Dsonar.sources=. \\
                                 -Dsonar.host.url=${SONAR_SERVER_URL} \\
                                 -Dsonar.login=${SONAR_TOKEN} \\
-                                -Dsonar.exclusions=node_modules/**,**/test/**,**/*.test.js,**/*.spec.js \\
-                                -Dsonar.test.inclusions= \\
-                                -Dsonar.javascript.lcov.reportPaths=
+                                -Dsonar.tests=test \\
+                                -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
                         """
                     }
                 }
