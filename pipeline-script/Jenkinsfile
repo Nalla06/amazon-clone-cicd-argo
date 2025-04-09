@@ -28,6 +28,10 @@ pipeline {
             steps {
                 sh '''
                     echo "Verifying Node.js and npm installation..."
+                    if ! command -v node &> /dev/null; then
+                        curl -fsSL https://deb.nodesource.com/setup_18.x | sudo -E bash -
+                        sudo apt-get install -y nodejs
+                    fi
                     node --version
                     npm --version
                 '''
@@ -41,29 +45,21 @@ pipeline {
                 SONAR_TOKEN = credentials('sonarqube-token')
             }
             steps {
-                script {
+                withSonarQubeEnv('SonarQube') {
                     sh '''
-                        if command -v sonar-scanner > /dev/null; then
-                            echo "sonar-scanner found at $(which sonar-scanner)"
-                            sonar-scanner --version
-                        else
-                            echo "sonar-scanner not found in PATH, please install it"
+                        echo "Checking for sonar-scanner..."
+                        if ! command -v sonar-scanner &> /dev/null; then
+                            echo "sonar-scanner not found. Please install it manually on Jenkins node."
                             exit 1
                         fi
-                // Create an empty test directory to satisfy SonarQube
-                sh "mkdir -p test"    // Create an empty test directory
-
-                    withSonarQubeEnv('SonarQube') {
-                        sh """
-                            sonar-scanner -X \\
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
-                                -Dsonar.sources=. \\
-                                -Dsonar.host.url=${SONAR_SERVER_URL} \\
-                                -Dsonar.login=${SONAR_TOKEN} \\
-                                -Dsonar.tests=test \\
-                                -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
-                        """
-                    }
+                        sonar-scanner -X \
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                            -Dsonar.sources=. \
+                            -Dsonar.host.url=${SONAR_SERVER_URL} \
+                            -Dsonar.login=${SONAR_TOKEN} \
+                            -Dsonar.tests=test \
+                            -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
+                    '''
                 }
             }
         }
@@ -78,7 +74,7 @@ pipeline {
 
         stage('Build Application') {
             steps {
-                sh 'npm run build || echo "Build warnings detected"'
+                sh 'npm run build || echo "Build completed with warnings"'
             }
         }
 
@@ -140,7 +136,7 @@ pipeline {
                         echo "Installing Trivy..."
                         curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
                     fi
-                    trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo "Trivy scan completed with issues"
+                    trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo "Trivy scan found issues"
                 '''
             }
         }
@@ -210,17 +206,15 @@ pipeline {
 
         stage('Verify ArgoCD Sync Status') {
             steps {
-                script {
-                    sh '''
-                        if ! command -v argocd &> /dev/null; then
-                            echo "ArgoCD CLI not found. Please check the ArgoCD UI manually."
-                        else
-                            echo "ArgoCD CLI found. Add your app verification logic here."
-                            # Example:
-                            # argocd app wait amazon-clone --timeout 300
-                        fi
-                    '''
-                }
+                sh '''
+                    if ! command -v argocd &> /dev/null; then
+                        echo "ArgoCD CLI not found. Please check the ArgoCD UI manually."
+                    else
+                        echo "ArgoCD CLI found. Add your app verification logic here."
+                        # Example:
+                        # argocd app wait amazon-clone --timeout 300
+                    fi
+                '''
             }
         }
     }
