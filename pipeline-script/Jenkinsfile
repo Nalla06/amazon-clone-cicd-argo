@@ -6,7 +6,7 @@ pipeline {
         ECR_REPOSITORY = 'amazon-clone'
         IMAGE_NAME = 'amazon-clone'
         SONAR_PROJECT_KEY = 'amazon-clone'
-        SONAR_SERVER_URL = 'http://3.82.55.175:9000'
+        SONAR_SERVER_URL = 'http://3.81.44.159:9000'
         KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/k8s-manifests.git'
         KUBERNETES_MANIFEST_PATH = 'deployment.yml'
         EKS_CLUSTER_NAME = 'amazon-cluster'
