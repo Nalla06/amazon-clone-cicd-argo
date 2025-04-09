@@ -72,7 +72,7 @@ pipeline {
                     script {
                         def qualityGate = waitForQualityGate()
                         if (qualityGate.status != 'OK') {
-                            error "Pipeline failed due to Quality Gate failure: ${qualityGate.status}"
+                            error "Pipeline failed due to Quality Gate failure: ${qualityGate.status}. Proceeding with the pipeline for demonstration purposes."
                         } else {
                             echo "Quality Gate passed. Good job!"
                         }
