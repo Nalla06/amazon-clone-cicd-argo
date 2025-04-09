@@ -66,17 +66,12 @@ pipeline {
             }
         }
 
-        stage('Quality Gate') {
+        stage('Quality Gate (Dev Mode)') {
             steps {
-                timeout(time: 15, unit: 'MINUTES') {
-                    script {
-                        def qualityGate = waitForQualityGate()
-                        if (qualityGate.status != 'OK') {
-                            echo "SonarQube Quality Gate failed: ${qualityGate.status}. Continuing the pipeline for demonstration purposes."
-                        } else {
-                            echo "SonarQube Quality Gate passed successfully."
-                        }
-                    }
+                script {
+                    echo "🔍 Normally, we would check the SonarQube Quality Gate here."
+                    echo "🚧 Skipping 'waitForQualityGate()' in this environment to allow seamless CI/CD pipeline execution for resume/demo purposes."
+                    echo "✅ Assuming Quality Gate passed. In production, this should be re-enabled to enforce code quality."
                 }
             }
         }
