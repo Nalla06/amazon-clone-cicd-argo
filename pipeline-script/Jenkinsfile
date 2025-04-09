@@ -50,18 +50,18 @@ pipeline {
                             echo "sonar-scanner not found in PATH, please install it"
                             exit 1
                         fi
-
-                    withSonarQubeEnv('SonarQube') {
-                        sh """
-                            sonar-scanner -X \\
-                                -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
-                                -Dsonar.sources=. \\
-                                -Dsonar.host.url=${SONAR_SERVER_URL} \\
-                                -Dsonar.login=${SONAR_TOKEN} \\
-                                -Dsonar.tests=test \\
-                                -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
-                        """
-                    }
+                    '''
+                }
+                withSonarQubeEnv('SonarQube') {
+                    sh """
+                        sonar-scanner -X \\
+                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
+                            -Dsonar.sources=. \\
+                            -Dsonar.host.url=${SONAR_SERVER_URL} \\
+                            -Dsonar.login=${SONAR_TOKEN} \\
+                            -Dsonar.tests=test \\
+                            -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
+                    """
                 }
             }
         }
@@ -85,7 +85,7 @@ pipeline {
                 withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
                     script {
                         sh '''
-                            if ! command -v aws &>/dev/null; then
+                            if ! command -v aws &> /dev/null; then
                                 echo "Installing AWS CLI..."
                                 curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
                                 unzip awscliv2.zip
