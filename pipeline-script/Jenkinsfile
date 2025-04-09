@@ -49,6 +49,7 @@ pipeline {
                         else
                             echo "⚠️ sonar-scanner not found. Skipping code analysis."
                             exit 0
+                        fi
                     '''
                 }
                 withSonarQubeEnv('SonarQube') {
