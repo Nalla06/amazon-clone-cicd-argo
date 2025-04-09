@@ -77,15 +77,19 @@ pipeline {
         }
         stage('Build Application') {
             steps {
-                sh '''
+                script {
                     echo "🔧 Installing dependencies..."
-                    npm install
+                    sh 'npm install'
 
                     echo "📦 Running build process..."
-                    npm run build || echo "⚠️ Build completed with warnings (or partial success)"
-                '''
+                    // Modify this section to allow partial success and log the output
+                    def buildStatus = sh(script: 'npm run build', returnStatus: true)
+                    if (buildStatus != 0) {
+                        echo "⚠️ Build completed with warnings or partial success."
+                    }
+                }
             }
-}
+        }
 
         stage('Create ECR Repository') {
             steps {
