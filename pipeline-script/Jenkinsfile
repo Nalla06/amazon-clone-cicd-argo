@@ -71,10 +71,10 @@ pipeline {
                 timeout(time: 15, unit: 'MINUTES') {
                     script {
                         def qualityGate = waitForQualityGate()
-                        if (qualityGate.status != 'OK') {
-                            error "Pipeline failed due to Quality Gate failure: ${qualityGate.status}. Proceeding with the pipeline for demonstration purposes."
+                        if (qualityGate.status == 'OK') {
+                            echo "SonarQube analysis passed! Quality Gate status: ${qualityGate.status}"
                         } else {
-                            echo "Quality Gate passed. Good job!"
+                            error "SonarQube Quality Gate failed: ${qualityGate.status}"
                         }
                     }
                 }
