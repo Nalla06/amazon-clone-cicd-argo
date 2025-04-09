@@ -89,7 +89,7 @@ cat <<EOF | sudo tee /opt/sonarqube/docker-compose.yml
 version: '3'
 services:
   sonarqube:
-    image: sonarqube:latest
+    image: sonarqube:9.9.0-community
     container_name: sonarqube
     ports:
       - "9000:9000"

@@ -13,7 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
         DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
-        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Ensure Java 17 is used
+        JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
     }
 
     stages {
@@ -37,7 +37,7 @@ pipeline {
         stage('Code Quality Analysis') {
             environment {
                 PATH = "${env.PATH}:/opt/sonar-scanner/bin"
-                JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64' // Ensure Java 17 is used
+                JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
                 SONAR_TOKEN = credentials('sonarqube-token')
             }
             steps {
@@ -48,7 +48,6 @@ pipeline {
                             sonar-scanner --version
                         else
                             echo "sonar-scanner not found in PATH, please install it"
-                            echo "Continuing pipeline despite missing sonar-scanner..."
                             exit 1
                         fi
                     '''
@@ -58,9 +57,17 @@ pipeline {
                                 -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
                                 -Dsonar.sources=. \\
                                 -Dsonar.host.url=${SONAR_SERVER_URL} \\
-                                -Dsonar.login=${SONAR_TOKEN} || echo "SonarQube scan failed, but continuing pipeline..."
+                                -Dsonar.login=${SONAR_TOKEN}
                         """
                     }
+                }
+            }
+        }
+
+        stage('Quality Gate') {
+            steps {
+                timeout(time: 10, unit: 'MINUTES') {
+                    waitForQualityGate abortPipeline: true
                 }
             }
         }
@@ -84,11 +91,12 @@ pipeline {
                             fi
                         '''
 
-                        def repoOutput = sh(
+                        def repoExists = sh(
                             script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} || true",
-                            returnStdout: true
+                            returnStatus: true
                         )
-                        if (!repoOutput.contains(ECR_REPOSITORY)) {
+
+                        if (repoExists != 0) {
                             sh "aws ecr create-repository --repository-name ${ECR_REPOSITORY} --image-scanning-configuration scanOnPush=true"
                         }
 
