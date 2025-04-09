@@ -77,9 +77,15 @@ pipeline {
         }
         stage('Build Application') {
             steps {
-                sh 'npm run build || echo "Build warnings detected"'
+                sh '''
+                    echo "🔧 Installing dependencies..."
+                    npm install
+
+                    echo "📦 Running build process..."
+                    npm run build || echo "⚠️ Build completed with warnings (or partial success)"
+                '''
             }
-        }
+}
 
         stage('Create ECR Repository') {
             steps {
