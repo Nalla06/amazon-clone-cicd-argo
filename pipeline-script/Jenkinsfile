@@ -12,7 +12,6 @@ pipeline {
         EKS_CLUSTER_NAME = 'amazon-cluster'
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
-        DOCKERHUB_CREDENTIALS_ID = 'docker-hub-credentials'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
     }
 
@@ -40,18 +39,18 @@ pipeline {
             }
             steps {
                 withSonarQubeEnv('SonarQube') {
-                sh """
-                    /opt/sonar-scanner/bin/sonar-scanner -X \
-                    -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
-                    -Dsonar.sources=. \
-                    -Dsonar.host.url=${SONAR_SERVER_URL} \
-                    -Dsonar.login=${SONAR_TOKEN} \
-                    -Dsonar.tests=test \
-                    -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
-                """
+                    sh """
+                        /opt/sonar-scanner/bin/sonar-scanner -X \
+                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        -Dsonar.sources=. \
+                        -Dsonar.host.url=${SONAR_SERVER_URL} \
+                        -Dsonar.login=${SONAR_TOKEN} \
+                        -Dsonar.tests=test \
+                        -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
+                    """
                 }
             }
-            }
+        }
 
         stage('Quality Gate (Dev Mode)') {
             steps {
@@ -80,23 +79,47 @@ pipeline {
             }
         }
 
-        stage('Create ECR Repository') {
+        stage('Configure ECR') {
             steps {
                 withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
                     script {
-                        def repoExists = sh(
-                            script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} || true",
-                            returnStatus: true
-                        )
-
-                        if (repoExists != 0) {
-                            sh "aws ecr create-repository --repository-name ${ECR_REPOSITORY} --image-scanning-configuration scanOnPush=true"
+                        // Verify AWS CLI access first
+                        sh 'aws sts get-caller-identity'
+                        
+                        // Get ECR repository URL with error handling
+                        env.ECR_URL = sh(
+                            script: """
+                                aws ecr describe-repositories \
+                                    --repository-names ${ECR_REPOSITORY} \
+                                    --query 'repositories[0].repositoryUri' \
+                                    --output text \
+                                    --region ${AWS_REGION} || echo 'ECR_FETCH_FAILED'
+                            """,
+                            returnStdout: true
+                        ).trim()
+                        
+                        if (env.ECR_URL == 'ECR_FETCH_FAILED') {
+                            error "❌ Failed to access ECR repository ${ECR_REPOSITORY} in ${AWS_REGION}"
+                        }
+                        
+                        if (env.ECR_URL == 'None') {
+                            error "❌ ECR repository ${ECR_REPOSITORY} not found in ${AWS_REGION}"
                         }
 
-                        env.ECR_URL = sh(script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} --query 'repositories[0].repositoryUri' --output text", returnStdout: true).trim()
-                        env.ECR_REGISTRY = sh(script: "echo ${env.ECR_URL} | cut -d/ -f1", returnStdout: true).trim()
-                        env.IMAGE_TAG = "${BUILD_NUMBER}"
+                        // Extract registry URL
+                        env.ECR_REGISTRY = sh(
+                            script: "echo ${env.ECR_URL} | cut -d/ -f1",
+                            returnStdout: true
+                        ).trim()
+                        
+                        // Set image tags
+                        env.IMAGE_TAG = "${env.BUILD_NUMBER}"
                         env.FULL_IMAGE_NAME = "${env.ECR_URL}:${env.IMAGE_TAG}"
+                        
+                        echo " ECR Configuration:"
+                        echo " - Registry: ${env.ECR_REGISTRY}"
+                        echo " - Repository: ${env.ECR_URL}"
+                        echo " - Image: ${env.FULL_IMAGE_NAME}"
                     }
                 }
             }
@@ -105,14 +128,14 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    withCredentials([usernamePassword(credentialsId: DOCKERHUB_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
-                        sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin || true'
-                    }
-                    sh "docker build -t ${FULL_IMAGE_NAME} ."
+                    sh """
+                        docker build -t ${FULL_IMAGE_NAME} . \
+                        && echo "Docker build successful" \
+                        || (echo "❌ Docker build failed" && exit 1)
+                    """
                 }
             }
-        }
-
+        }        
         stage('Trivy Security Scan') {
             steps {
                 sh "trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo 'Trivy scan completed with issues'"
