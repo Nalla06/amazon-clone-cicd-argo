@@ -168,7 +168,7 @@ pipeline {
                 )]) {
                     sh '''
                         echo "🧹 Cleaning up old k8s-manifests..."
-                        rm -rf k8s-manifests
+                        rm -rf amazon-clone-cicd-argo k8s-manifests
 
                         echo " Cloning k8s-manifests from repo..."
                         git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Nalla06/amazon-clone-cicd-argo.git
