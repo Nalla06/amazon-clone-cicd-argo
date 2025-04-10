@@ -36,24 +36,22 @@ pipeline {
 
         stage('Code Quality Analysis') {
             environment {
-                PATH = "${env.PATH}:/opt/sonar-scanner/bin"
-                JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
-                SONAR_TOKEN = credentials('sonar-token')
+                SONAR_TOKEN = credentials('sonar-token')  // Ensure credential ID matches Jenkins
             }
             steps {
                 withSonarQubeEnv('SonarQube') {
-                    sh """
-                        sonar-scanner \\
-                            -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
-                            -Dsonar.sources=. \\
-                            -Dsonar.host.url=${SONAR_SERVER_URL} \\
-                            -Dsonar.login=${SONAR_TOKEN} \\
-                            -Dsonar.tests=test \\
-                            -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
-                    """
+                sh """
+                    /opt/sonar-scanner/bin/sonar-scanner -X \
+                    -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                    -Dsonar.sources=. \
+                    -Dsonar.host.url=${SONAR_SERVER_URL} \
+                    -Dsonar.login=${SONAR_TOKEN} \
+                    -Dsonar.tests=test \
+                    -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
+                """
                 }
             }
-        }
+            }
 
         stage('Quality Gate (Dev Mode)') {
             steps {
