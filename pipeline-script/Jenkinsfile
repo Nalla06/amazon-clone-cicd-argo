@@ -105,13 +105,16 @@ pipeline {
                 }
             }
         }
+
         stage('Docker Build') {
             steps {
                 script {
                     sh """
-                        # Add Docker socket permissions workaround
-                        sudo chmod 777 /var/run/docker.sock || true
-                        # Build with Docker
+                        # Ensure user has access to Docker by adding Jenkins user to the Docker group
+                        sudo usermod -aG docker jenkins || true
+                        # Restart Jenkins agent to apply group changes (only needed once in setup)
+                        sudo service jenkins restart || true
+                        # Build Docker image
                         docker build -t ${FULL_IMAGE_NAME} . \
                         && echo "Docker build successful" \
                         || (echo "❌ Docker build failed" && exit 1)
