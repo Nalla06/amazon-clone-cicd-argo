@@ -38,7 +38,7 @@ pipeline {
             environment {
                 PATH = "${env.PATH}:/opt/sonar-scanner/bin"
                 JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
-                SONAR_TOKEN = credentials('sonarqube-token')
+                SONAR_TOKEN = credentials('sonar-token')
             }
             steps {
                 withSonarQubeEnv('SonarQube') {
