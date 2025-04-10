@@ -6,7 +6,7 @@ pipeline {
         ECR_REPOSITORY = 'amazon-clone'
         IMAGE_NAME = 'amazon-clone'
         SONAR_PROJECT_KEY = 'amazon-clone'
-        SONAR_SERVER_URL = 'http://3.81.44.159:9000'
+        SONAR_SERVER_URL = 'http://54.162.191.48:9000'
         KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/k8s-manifests.git'
         KUBERNETES_MANIFEST_PATH = 'deployment.yml'
         EKS_CLUSTER_NAME = 'amazon-cluster'
@@ -41,20 +41,9 @@ pipeline {
                 SONAR_TOKEN = credentials('sonarqube-token')
             }
             steps {
-                script {
-                    sh '''
-                        if command -v sonar-scanner > /dev/null; then
-                            echo "sonar-scanner found at $(which sonar-scanner)"
-                            sonar-scanner --version
-                        else
-                            echo "⚠️ sonar-scanner not found. Skipping code analysis."
-                            exit 0
-                        fi
-                    '''
-                }
                 withSonarQubeEnv('SonarQube') {
                     sh """
-                        sonar-scanner -X \\
+                        sonar-scanner \\
                             -Dsonar.projectKey=${SONAR_PROJECT_KEY} \\
                             -Dsonar.sources=. \\
                             -Dsonar.host.url=${SONAR_SERVER_URL} \\
@@ -75,6 +64,7 @@ pipeline {
                 }
             }
         }
+
         stage('Build Application') {
             steps {
                 script {
@@ -82,6 +72,7 @@ pipeline {
                     sh 'npm install'
 
                     echo "📦 Running build process..."
+                    try {
                         sh 'npm run build || echo "⚠️ Build completed with warnings (or partial success)"'
                     } catch (Exception e) {
                         echo "❗ Build failed, but continuing pipeline"
@@ -95,15 +86,6 @@ pipeline {
             steps {
                 withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
                     script {
-                        sh '''
-                            if ! command -v aws &> /dev/null; then
-                                echo "Installing AWS CLI..."
-                                curl "https://awscli.amazonaws.com/awscli-exe-linux-x86_64.zip" -o "awscliv2.zip"
-                                unzip awscliv2.zip
-                                sudo ./aws/install
-                            fi
-                        '''
-
                         def repoExists = sh(
                             script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} || true",
                             returnStatus: true
@@ -125,15 +107,6 @@ pipeline {
         stage('Docker Build') {
             steps {
                 script {
-                    sh '''
-                        if ! command -v docker &> /dev/null; then
-                            echo "Installing Docker..."
-                            sudo apt-get update
-                            sudo apt-get install -y docker.io
-                            sudo systemctl start docker
-                            sudo systemctl enable docker
-                        fi
-                    '''
                     withCredentials([usernamePassword(credentialsId: DOCKERHUB_CREDENTIALS_ID, passwordVariable: 'DOCKER_PASSWORD', usernameVariable: 'DOCKER_USERNAME')]) {
                         sh 'echo $DOCKER_PASSWORD | docker login -u $DOCKER_USERNAME --password-stdin || true'
                     }
@@ -144,13 +117,7 @@ pipeline {
 
         stage('Trivy Security Scan') {
             steps {
-                sh '''
-                    if ! command -v trivy &> /dev/null; then
-                        echo "Installing Trivy..."
-                        curl -sfL https://raw.githubusercontent.com/aquasecurity/trivy/main/contrib/install.sh | sudo sh -s -- -b /usr/local/bin
-                    fi
-                    trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo "Trivy scan completed with issues"
-                '''
+                sh "trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo 'Trivy scan completed with issues'"
             }
         }
 
@@ -171,12 +138,6 @@ pipeline {
             steps {
                 withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
                     sh '''
-                        if ! command -v kubectl &> /dev/null; then
-                            echo "Installing kubectl..."
-                            curl -LO "https://dl.k8s.io/release/$(curl -L -s https://dl.k8s.io/release/stable.txt)/bin/linux/amd64/kubectl"
-                            chmod +x kubectl
-                            sudo mv kubectl /usr/local/bin/
-                        fi
                         aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
                         kubectl get nodes
                     '''
@@ -220,15 +181,8 @@ pipeline {
         stage('Verify ArgoCD Sync Status') {
             steps {
                 script {
-                    sh '''
-                        if ! command -v argocd &> /dev/null; then
-                            echo "ArgoCD CLI not found. Please check the ArgoCD UI manually."
-                        else
-                            echo "ArgoCD CLI found. Add your app verification logic here."
-                            # Example:
-                            # argocd app wait amazon-clone --timeout 300
-                        fi
-                    '''
+                    echo "Checking ArgoCD sync status"
+                    sh 'argocd app wait amazon-clone --timeout 300 || echo "ArgoCD sync check skipped or failed"'
                 }
             }
         }

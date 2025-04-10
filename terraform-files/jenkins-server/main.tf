@@ -1,9 +1,45 @@
 provider "aws" {
   region = var.aws_region
 }
+
 data "aws_ssm_parameter" "ssh_private_key" {
   name            = "/ssh/linux-key-pair"  # The name of your stored private key
   with_decryption = true
+}
+
+# ECR Repository for amazon-clone
+resource "aws_ecr_repository" "amazon_clone" {
+  name                 = "amazon-clone"
+  image_tag_mutability = "MUTABLE"
+
+  image_scanning_configuration {
+    scan_on_push = true
+  }
+
+  tags = {
+    Name        = "amazon-clone"
+    Environment = "production"
+  }
+}
+
+# ECR Repository Lifecycle Policy to manage images
+resource "aws_ecr_lifecycle_policy" "amazon_clone_policy" {
+  repository = aws_ecr_repository.amazon_clone.name
+
+  policy = jsonencode({
+    rules = [{
+      rulePriority = 1,
+      description  = "Keep last 10 images",
+      selection = {
+        tagStatus     = "any",
+        countType     = "imageCountMoreThan",
+        countNumber   = 10
+      },
+      action = {
+        type = "expire"
+      }
+    }]
+  })
 }
 
 # STEP 1: Setting up a Security Group with necessary ports
@@ -126,6 +162,7 @@ resource "aws_security_group" "my_security_group" {
     cidr_blocks = ["0.0.0.0/0"]
   }
 }
+
 resource "aws_iam_role" "jenkins_ssm_role" {
   name = "jenkins_ssm_access"
 
@@ -160,6 +197,29 @@ resource "aws_iam_role_policy" "jenkins_ssm_policy" {
           "arn:aws:ssm:*:*:parameter/ssh/*",  
           "arn:aws:ssm:*:*:parameter/jenkins/*"
         ]
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "ecr:GetDownloadUrlForLayer",
+          "ecr:BatchGetImage",
+          "ecr:BatchCheckLayerAvailability",
+          "ecr:PutImage",
+          "ecr:InitiateLayerUpload",
+          "ecr:UploadLayerPart",
+          "ecr:CompleteLayerUpload",
+          "ecr:GetAuthorizationToken"
+        ],
+        Resource = [
+          aws_ecr_repository.amazon_clone.arn
+        ]
+      },
+      {
+        Effect = "Allow",
+        Action = [
+          "ecr:GetAuthorizationToken"
+        ],
+        Resource = "*"
       }
     ]
   })
@@ -223,11 +283,15 @@ resource "aws_instance" "jenkins_server" {
   }
 }
 
-
 output "public_ip_address" {
   value = "${aws_instance.jenkins_server.public_ip}"
 }
 
 output "private_ip_address" {
   value = "${aws_instance.jenkins_server.private_ip}"
+}
+
+output "ecr_repository_url" {
+  value = "${aws_ecr_repository.amazon_clone.repository_url}"
+  description = "The URL of the amazon-clone ECR repository"
 }

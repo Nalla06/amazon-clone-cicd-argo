@@ -48,6 +48,15 @@ sudo apt-get update -y
 sudo apt-get install -y jenkins
 sudo systemctl enable jenkins
 sudo systemctl start jenkins
+# Install Node.js and npm (Added Node.js section)
+echo "Installing Node.js and npm..."
+curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
+sudo apt-get install -y nodejs
+
+# Verify installation
+echo "Node.js and npm version:"
+node -v
+npm -v
 
 # Install AWS CLI
 echo "Installing AWS CLI..."
@@ -300,3 +309,4 @@ echo "java -jar jenkins-cli.jar -s \${JENKINS_URL} -auth \${JENKINS_USER}:\${JEN
 
 echo "Node setup script created and ready to use!"
 EOF
+

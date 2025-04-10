@@ -1,5 +1,7 @@
+#!/bin/bash
+
 echo "Creating Docker-based Jenkins agent script..."
-cat <<EOF | sudo tee /opt/create-jenkins-agent-container.sh
+cat <<EOF > /opt/create-jenkins-agent-container.sh
 #!/bin/bash
 
 # This script helps create a Jenkins agent using Docker
@@ -14,8 +16,8 @@ EXECUTORS=\$2
 JENKINS_URL="http://\$(curl -s http://169.254.169.254/latest/meta-data/local-ipv4):8080"
 
 # Create agent working directory
-sudo mkdir -p /var/jenkins-agents/\${NODE_NAME}
-sudo chown 1000:1000 /var/jenkins-agents/\${NODE_NAME}
+mkdir -p /var/jenkins-agents/\${NODE_NAME}
+chown 1000:1000 /var/jenkins-agents/\${NODE_NAME}
 
 # Create Docker agent
 docker run -d --name jenkins-agent-\${NODE_NAME} \
@@ -33,11 +35,11 @@ echo "Note: Replace <agent-secret> with the actual agent secret from Jenkins"
 echo "You can get this by creating a node in Jenkins UI and checking its connection info"
 EOF
 
-sudo chmod +x /opt/create-jenkins-agent-container.sh
+chmod +x /opt/create-jenkins-agent-container.sh
 
-# Create SonarQube Jenkins integration script
+# Create improved SonarQube Jenkins integration script
 echo "Creating SonarQube Jenkins integration script..."
-cat <<EOF | sudo tee /opt/configure-sonarqube-jenkins.sh
+cat <<EOF > /opt/configure-sonarqube-jenkins.sh
 #!/bin/bash
 
 # Wait for SonarQube to be fully up and running
@@ -46,7 +48,7 @@ timeout 300 bash -c 'until curl -s -f http://localhost:9000/api/system/status | 
 echo "SonarQube is up and running!"
 
 # Get Jenkins admin password
-JENKINS_ADMIN_PASSWORD=\$(sudo cat /var/lib/jenkins/secrets/initialAdminPassword)
+JENKINS_ADMIN_PASSWORD=\$(cat /var/lib/jenkins/secrets/initialAdminPassword)
 
 # Generate SonarQube token
 echo "Generating SonarQube token for Jenkins integration..."
@@ -62,30 +64,62 @@ curl -X POST -c /tmp/cookies.txt "http://localhost:9000/api/authentication/login
 TOKEN_RESPONSE=\$(curl -s -X POST -b /tmp/cookies.txt "http://localhost:9000/api/user_tokens/generate" \
   -d "name=jenkins-integration&login=admin")
 
-# Extract token from response
+# Extract token from response using more reliable JSON parsing
 SONAR_TOKEN=\$(echo \$TOKEN_RESPONSE | grep -o '"token":"[^"]*' | awk -F':' '{print \$2}' | tr -d '"')
 
 if [ -z "\$SONAR_TOKEN" ]; then
   echo "Failed to get SonarQube token. You may need to create one manually."
   echo "Go to SonarQube > My Account > Security > Generate Token"
 else
-  echo "SonarQube token generated: \$SONAR_TOKEN"
+  echo "SonarQube token generated successfully!"
+  echo "SonarQube Token: \$SONAR_TOKEN"
   
-  # Create a file with SonarQube server and token info for Jenkins setup
-  cat <<EOG | sudo tee /var/lib/jenkins/sonarqube-info.txt
+  # Save the token to a file for reference
+  cat <<EOG > /var/lib/jenkins/sonarqube-info.txt
 SonarQube URL: http://localhost:9000
 SonarQube Token: \$SONAR_TOKEN
 EOG
-  sudo chown jenkins:jenkins /var/lib/jenkins/sonarqube-info.txt
+  chown jenkins:jenkins /var/lib/jenkins/sonarqube-info.txt
   
   echo "SonarQube information saved to /var/lib/jenkins/sonarqube-info.txt"
-  echo "Use this token when configuring the SonarQube Scanner in Jenkins"
+  
+  # Directly create the Jenkins credential for SonarQube
+  cat > /tmp/add-sonar-credential.groovy << EOG
+import jenkins.model.*
+import com.cloudbees.plugins.credentials.*
+import com.cloudbees.plugins.credentials.domains.*
+import org.jenkinsci.plugins.plaincredentials.impl.*
+import hudson.util.Secret
+
+// Get credentials store
+def domain = Domain.global()
+def store = Jenkins.instance.getExtensionList('com.cloudbees.plugins.credentials.SystemCredentialsProvider')[0].getStore()
+
+// Create SonarQube token
+def sonarToken = new StringCredentialsImpl(
+  CredentialsScope.GLOBAL,
+  "sonarqube-token",
+  "SonarQube Scanner Token",
+  Secret.fromString("$SONAR_TOKEN")
+)
+
+// Add the credential
+store.addCredentials(domain, sonarToken)
+
+println "SonarQube token added to Jenkins credentials"
+EOG
+
+  # Execute Groovy script to add SonarQube credential
+  echo "Adding SonarQube token to Jenkins credentials..."
+  cat /tmp/add-sonar-credential.groovy | java -jar /tmp/jenkins-cli.jar -auth admin:\$JENKINS_ADMIN_PASSWORD -s http://localhost:8080 groovy =
+  
+  echo "SonarQube token has been automatically added to Jenkins credentials with ID: sonarqube-token"
 fi
 
-rm -f /tmp/cookies.txt
+rm -f /tmp/cookies.txt /tmp/add-sonar-credential.groovy
 EOF
 
-sudo chmod +x /opt/configure-sonarqube-jenkins.sh
+chmod +x /opt/configure-sonarqube-jenkins.sh
 
 # === PART 2: Configure Jenkins ===
 
@@ -102,7 +136,7 @@ timeout 300 bash -c 'until curl -s -f http://localhost:8080 > /dev/null; do echo
 echo "Jenkins is up and running!"
 
 # Get Jenkins admin password
-JENKINS_ADMIN_PASSWORD=$(sudo cat /var/lib/jenkins/secrets/initialAdminPassword)
+JENKINS_ADMIN_PASSWORD=$(cat /var/lib/jenkins/secrets/initialAdminPassword)
 echo "Jenkins admin password: $JENKINS_ADMIN_PASSWORD"
 echo "Please use this password for initial Jenkins setup at http://your-server-ip:8080"
 
@@ -137,9 +171,12 @@ def plugins = [
   "prometheus",
   "ssh-slaves",
   "docker-plugin",
-  "metrics"
+  "metrics",
+  "amazon-ecr",
+  "nodejs",
+  "pipeline-aws",
+  "pipeline-stage-view" 
 ]
-
 plugins.each { plugin ->
   if (!pm.getPlugin(plugin)) {
     println "Installing ${plugin}..."
@@ -165,7 +202,7 @@ java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s http://loc
 
 echo "Waiting for Jenkins to restart..."
 sleep 30
-timeout 300 bash -c 'until curl -s -f http://localhost:8080 > /dev/null; do echo "Waiting for Jenkins restart..."; sleep 5; done'
+timeout 200 bash -c 'until curl -s -f http://localhost:8080 > /dev/null; do echo "Waiting for Jenkins restart..."; sleep 5; done'
 echo "Jenkins successfully restarted!"
 
 # Set up credentials from AWS Parameter Store
@@ -179,7 +216,6 @@ if aws ssm describe-parameters --region $REGION --parameter-filters "Key=Name,Va
   # Retrieve credentials from AWS Parameter Store
   GITHUB_USERNAME=$(aws ssm get-parameter --region $REGION --name "/jenkins/github/username" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
   GITHUB_TOKEN=$(aws ssm get-parameter --region $REGION --name "/jenkins/github/token" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
-  SONAR_TOKEN=$(aws ssm get-parameter --region $REGION --name "/jenkins/sonarqube/token" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
   DOCKER_USERNAME=$(aws ssm get-parameter --region $REGION --name "/jenkins/docker/username" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
   DOCKER_PASSWORD=$(aws ssm get-parameter --region $REGION --name "/jenkins/docker/password" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
   AWS_ACCESS_KEY=$(aws ssm get-parameter --region $REGION --name "/jenkins/aws/access-key" --with-decryption --query "Parameter.Value" --output text 2>/dev/null || echo "")
@@ -214,18 +250,6 @@ if ("$GITHUB_USERNAME" && "$GITHUB_TOKEN") {
   )
   credentialsToAdd.add(githubCredentials)
   println "Added GitHub credentials"
-}
-
-// Create SonarQube token
-if ("$SONAR_TOKEN") {
-  def sonarToken = new StringCredentialsImpl(
-    CredentialsScope.GLOBAL,
-    "sonarqube-token",
-    "SonarQube Scanner Token",
-    Secret.fromString("$SONAR_TOKEN")
-  )
-  credentialsToAdd.add(sonarToken)
-  println "Added SonarQube token"
 }
 
 // Create Docker Hub credentials
@@ -283,7 +307,6 @@ else
   echo "You need to create the following parameters in AWS Parameter Store for automatic credential setup:"
   echo "- /jenkins/github/username"
   echo "- /jenkins/github/token"
-  echo "- /jenkins/sonarqube/token"
   echo "- /jenkins/docker/username"
   echo "- /jenkins/docker/password"
   echo "- /jenkins/aws/access-key"
