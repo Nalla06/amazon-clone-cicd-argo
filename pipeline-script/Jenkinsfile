@@ -130,32 +130,22 @@ pipeline {
 
         stage('Push to ECR') {
             steps {
-                withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
-                    script {
-                        try {
-                            sh '''
-                                echo "Logging into ECR..."
-                                aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                                
-                                echo "Pushing image to ECR..."
-                                docker push ${FULL_IMAGE_NAME}
-                                
-                                echo "Tagging image as 'latest'..."
-                                docker tag ${FULL_IMAGE_NAME} ${ECR_URL}:latest
-                                docker push ${ECR_URL}:latest
-                            '''
-                        } catch (Exception e) {
-                            echo "❌ Failed to push image to ECR"
-                            error "Push to ECR stage failed"
-                        }
-                    }
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                    sh '''
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        docker push ${FULL_IMAGE_NAME}
+                        docker tag ${FULL_IMAGE_NAME} ${ECR_URL}:latest
+                        docker push ${ECR_URL}:latest
+                    '''
                 }
             }
         }
 
         stage('Configure kubectl') {
             steps {
-                withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                     sh '''
                         aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
                         kubectl get nodes
@@ -163,7 +153,6 @@ pipeline {
                 }
             }
         }
-
         stage('Clone K8s Manifest Repository') {
             steps {
                 sh 'rm -rf k8s-manifests || true'
