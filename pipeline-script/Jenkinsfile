@@ -162,7 +162,7 @@ pipeline {
         stage('Clone K8s Manifest Repository') {
             steps {
                 sh 'rm -rf k8s-manifests || true'
-                withCredentials([usernamePassword(credentialsId: github-credentials-id, passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
+                withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
                     sh "git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@${KUBERNETES_MANIFEST_REPO.replace('https://', '')} k8s-manifests"
                 }
             }
