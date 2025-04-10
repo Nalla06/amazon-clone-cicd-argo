@@ -185,34 +185,41 @@ pipeline {
 
         stage('Update Kubernetes Manifest') {
             steps {
-                dir('k8s-manifests') {
+                dir('amazon-clone-cicd-argo/k8s-manifests') {
                     script {
-                        sh """
-                            echo "🔍 Checking if deployment manifest exists..."
-                            if [ ! -f "deployment.yml" ]; then
-                                echo "❌ Manifest not found! Available YAML files:"
-                                find . -name '*.yml' -o -name '*.yaml'
-                                exit 1
-                            fi
+                        try {
+                            sh """
+                                echo "🔍 Checking if deployment manifest exists..."
+                                if [ ! -f "deployment.yml" ]; then
+                                    echo "❌ Manifest not found! Available YAML files:"
+                                    find . -name '*.yml' -o -name '*.yaml'
+                                    exit 1
+                                fi
 
-                            echo "📝 Updating image in deployment.yml..."
-                            sed -i "s|image: .*${ECR_REPOSITORY}.*|image: ${FULL_IMAGE_NAME}|g" deployment.yml
+                                echo "📝 Updating image in deployment.yml..."
+                                sed -i "s|image: .*${ECR_REPOSITORY}.*|image: ${FULL_IMAGE_NAME}|g" deployment.yml
 
-                            echo "🔧 Configuring Git for commit..."
-                            git config user.email 'lakshmi.rajyam06@gmail.com'
-                            git config user.name 'Nalla06'
+                                echo "🔧 Configuring Git for commit..."
+                                git config user.email 'lakshmi.rajyam06@gmail.com'
+                                git config user.name 'Nalla06'
 
-                            echo "📦 Committing and pushing updated manifest..."
-                            git add deployment.yml
-                            git commit -m "Update image to ${IMAGE_TAG} [ci skip]" || echo "ℹ️ No changes to commit"
+                                echo "📦 Committing and pushing updated manifest..."
+                                git add deployment.yml
+                                git commit -m "Update image to ${IMAGE_TAG} [ci skip]" || echo "ℹ️ No changes to commit"
 
-                            echo "🚀 Pushing changes to remote repo..."
-                            git push https://${GIT_USERNAME}:${GIT_PASSWORD}@${KUBERNETES_MANIFEST_REPO.replace('https://', '')} HEAD:main
-                        """
+                                echo "🚀 Pushing changes to remote repo..."
+                                git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Nalla06/amazon-clone-cicd-argo.git HEAD:main
+                            """
+                        } catch (err) {
+                            echo "🔥 Error while updating Kubernetes manifest: ${err}"
+                            currentBuild.result = 'FAILURE'
+                            throw err
+                        }
                     }
                 }
             }
         }
+
 
         stage('Verify ArgoCD Sync Status') {
             steps {
