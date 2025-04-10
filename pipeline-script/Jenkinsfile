@@ -14,16 +14,7 @@ pipeline {
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
     }
-    options {
-        skipDefaultCheckout()  // Skip the default checkout to prevent re-checkouts
-    }
-
-    stages {
-        stage('Cleanup Workspace') {
-            steps {
-                cleanWs()  // Clean up workspace to avoid residual files
-            }
-        }
+    
     stages {
         stage('Git Checkout') {
             steps {
