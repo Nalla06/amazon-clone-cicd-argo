@@ -109,6 +109,9 @@ pipeline {
             steps {
                 script {
                     sh """
+                        # Add Docker socket permissions workaround
+                        sudo chmod 777 /var/run/docker.sock || true
+                        # Build with Docker
                         docker build -t ${FULL_IMAGE_NAME} . \
                         && echo "Docker build successful" \
                         || (echo "❌ Docker build failed" && exit 1)
