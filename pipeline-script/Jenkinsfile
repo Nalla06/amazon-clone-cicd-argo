@@ -131,12 +131,24 @@ pipeline {
         stage('Push to ECR') {
             steps {
                 withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
-                    sh '''
-                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
-                        docker push ${FULL_IMAGE_NAME}
-                        docker tag ${FULL_IMAGE_NAME} ${ECR_URL}:latest
-                        docker push ${ECR_URL}:latest
-                    '''
+                    script {
+                        try {
+                            sh '''
+                                echo "Logging into ECR..."
+                                aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                                
+                                echo "Pushing image to ECR..."
+                                docker push ${FULL_IMAGE_NAME}
+                                
+                                echo "Tagging image as 'latest'..."
+                                docker tag ${FULL_IMAGE_NAME} ${ECR_URL}:latest
+                                docker push ${ECR_URL}:latest
+                            '''
+                        } catch (Exception e) {
+                            echo "❌ Failed to push image to ECR"
+                            error "Push to ECR stage failed"
+                        }
+                    }
                 }
             }
         }
