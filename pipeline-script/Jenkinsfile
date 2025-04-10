@@ -147,9 +147,15 @@ pipeline {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
                                 credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                     sh '''
+                        echo "Checking if kubectl is available..."
+                        which kubectl || { echo "kubectl not found, please ensure it is installed and in the PATH"; exit 1; }
+
+                        echo "Updating kubeconfig..."
                         aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
+
+                        echo "Verifying kubectl setup..."
                         kubectl get nodes
-                    '''
+                '''
                 }
             }
         }
