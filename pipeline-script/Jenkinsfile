@@ -188,18 +188,25 @@ pipeline {
                 dir('k8s-manifests') {
                     script {
                         sh """
-                            if [ ! -f "${KUBERNETES_MANIFEST_PATH}" ]; then
-                                echo "Manifest not found!"
+                            echo "🔍 Checking if deployment manifest exists..."
+                            if [ ! -f "deployment.yml" ]; then
+                                echo "❌ Manifest not found! Available YAML files:"
                                 find . -name '*.yml' -o -name '*.yaml'
                                 exit 1
                             fi
 
-                            sed -i "s|image: .*${ECR_REPOSITORY}.*|image: ${FULL_IMAGE_NAME}|g" ${KUBERNETES_MANIFEST_PATH}
+                            echo "📝 Updating image in deployment.yml..."
+                            sed -i "s|image: .*${ECR_REPOSITORY}.*|image: ${FULL_IMAGE_NAME}|g" deployment.yml
 
+                            echo "🔧 Configuring Git for commit..."
                             git config user.email 'lakshmi.rajyam06@gmail.com'
                             git config user.name 'Nalla06'
-                            git add ${KUBERNETES_MANIFEST_PATH}
-                            git commit -m "Update image to ${IMAGE_TAG} [ci skip]" || echo "No changes to commit"
+
+                            echo "📦 Committing and pushing updated manifest..."
+                            git add deployment.yml
+                            git commit -m "Update image to ${IMAGE_TAG} [ci skip]" || echo "ℹ️ No changes to commit"
+
+                            echo "🚀 Pushing changes to remote repo..."
                             git push https://${GIT_USERNAME}:${GIT_PASSWORD}@${KUBERNETES_MANIFEST_REPO.replace('https://', '')} HEAD:main
                         """
                     }
