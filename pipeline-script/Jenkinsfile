@@ -8,7 +8,7 @@ pipeline {
         SONAR_PROJECT_KEY = 'amazon-clone'
         SONAR_SERVER_URL = 'http://13.217.145.154:9000'
         KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/amazon-clone-cicd-argo.git'
-        KUBERNETES_MANIFEST_PATH = 'deployment.yml'
+        KUBERNETES_MANIFEST_PATH = 'k8s-manifests/deployment.yml'
         EKS_CLUSTER_NAME = 'amazon-cluster'
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
@@ -161,9 +161,24 @@ pipeline {
         }
         stage('Clone K8s Manifest Repository') {
             steps {
-                sh 'rm -rf k8s-manifests || true'
-                withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", passwordVariable: 'GIT_PASSWORD', usernameVariable: 'GIT_USERNAME')]) {
-                    sh "git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@${KUBERNETES_MANIFEST_REPO.replace('https://', '')} k8s-manifests"
+                withCredentials([usernamePassword(
+                    credentialsId: "${GIT_CREDENTIALS_ID}", 
+                    usernameVariable: 'GIT_USERNAME', 
+                    passwordVariable: 'GIT_PASSWORD'
+                )]) {
+                    sh '''
+                        echo "🧹 Cleaning up old k8s-manifests..."
+                        rm -rf k8s-manifests
+
+                        echo " Cloning k8s-manifests from repo..."
+                        git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Nalla06/amazon-clone-cicd-argo.git
+
+                        echo " Renaming to k8s-manifests..."
+                        mv amazon-clone-cicd-argo/k8s-manifests ./k8s-manifests || { echo "❌ Folder k8s-manifests not found in repo!"; exit 1; }
+
+                        echo " Folder structure:"
+                        ls -la k8s-manifests
+                    '''
                 }
             }
         }
