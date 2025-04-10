@@ -81,42 +81,26 @@ pipeline {
 
         stage('Configure ECR') {
             steps {
-                script {
-                    echo "AWS Credentials ID: ${AWS_CREDENTIALS_ID}"
-                    echo "AWS Region: ${AWS_REGION}"
-                    echo "ECR Repository: ${ECR_REPOSITORY}"
-                }
-                
-                withAWS(credentials: AWS_CREDENTIALS_ID, region: AWS_REGION) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                     script {
-                        // Debug AWS connectivity
-                        sh 'echo "Testing AWS CLI connection..."'
-                        sh 'aws --version'
-                        sh 'aws sts get-caller-identity || echo "AWS CLI authentication failed"'
-                        
-                        // Debug ECR repository access
-                        sh 'echo "Testing ECR repository access..."'
-                        sh """
-                            aws ecr describe-repositories \
-                                --repository-names ${ECR_REPOSITORY} \
-                                --region ${AWS_REGION} || echo "Failed to access ECR repository"
-                        """
-                        
-                        // Continue with your existing logic
+                        // Get ECR repository URL
                         env.ECR_URL = sh(
-                            script: """
-                                aws ecr describe-repositories \
-                                    --repository-names ${ECR_REPOSITORY} \
-                                    --query 'repositories[0].repositoryUri' \
-                                    --output text \
-                                    --region ${AWS_REGION} || echo 'ECR_FETCH_FAILED'
-                            """,
+                            script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} --region ${AWS_REGION} --query 'repositories[0].repositoryUri' --output text",
                             returnStdout: true
                         ).trim()
                         
-                        echo "ECR URL: ${env.ECR_URL}"
+                        // Extract registry URL for Docker login
+                        env.ECR_REGISTRY = sh(
+                            script: "echo ${env.ECR_URL} | cut -d/ -f1",
+                            returnStdout: true
+                        ).trim()
                         
-                        // Rest of your code
+                        // Set image tags
+                        env.IMAGE_TAG = "${env.BUILD_NUMBER}"
+                        env.FULL_IMAGE_NAME = "${env.ECR_URL}:${env.IMAGE_TAG}"
+                        
+                        echo "ECR Configuration: ${env.FULL_IMAGE_NAME}"
                     }
                 }
             }
