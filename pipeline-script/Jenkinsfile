@@ -232,22 +232,31 @@ pipeline {
                         kubectl create namespace argocd || true
                         helm install argocd argo/argo-cd -n argocd --set server.service.type=LoadBalancer
 
-                        echo "🚀 Installing Prometheus..."
+                        echo "🚀 Installing Prometheus with persistence enabled..."
                         kubectl create namespace monitoring || true
-                        helm install prometheus prometheus-community/prometheus -n monitoring
+                        helm install prometheus prometheus-community/prometheus -n monitoring \
+                            --set server.persistentVolume.enabled=true \
+                            --set server.persistentVolume.storageClassName=gp2 \
+                            --set server.persistentVolume.size=10Gi \
+                            --set alertmanager.persistentVolume.enabled=true \
+                            --set alertmanager.persistentVolume.storageClassName=gp2 \
+                            --set alertmanager.persistentVolume.size=10Gi
 
-                        echo "🚀 Installing Grafana..."
+                        echo "🚀 Installing Grafana with persistence enabled..."
                         helm install grafana grafana/grafana -n monitoring --set service.type=LoadBalancer \
-                            --set adminPassword='admin' --set persistence.enabled=true
-                        
-                        echo "✅ Monitoring tools installed as Kubernetes services"
+                            --set adminPassword='admin' \
+                            --set persistence.enabled=true \
+                            --set persistence.storageClassName=gp2 \
+                            --set persistence.size=10Gi
+
+                        echo "✅ Monitoring tools installed as Kubernetes services with persistence handled by Helm"
                     '''
                     script {
                         markStageComplete('Install Monitoring Tools (Helm)')
                     }
                 }
             }
-        }            
+}            
     
         stage('Docker Build') {
             when {
