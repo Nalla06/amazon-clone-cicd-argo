@@ -2,6 +2,7 @@ pipeline {
     agent any
 
     parameters {
+        booleanParam(name: 'RUN_TERRAFORM_DESTROY', defaultValue: false, description: 'Run Terraform Destroy stage')
         booleanParam(name: 'SKIP_TERRAFORM', defaultValue: false, description: 'Skip Terraform EKS setup stage')
         booleanParam(name: 'SKIP_COMPLETED_STAGES', defaultValue: false, description: 'Skip stages that completed successfully in previous build')
         string(name: 'LAST_SUCCESSFUL_STAGE', defaultValue: '', description: 'Last successfully completed stage from previous build')
@@ -427,30 +428,30 @@ pipeline {
     }
     // Add Terraform Destroy stage at the end
         stage('Terraform Destroy') {
-            when {
-                expression {
-                    // This stage is always manual and triggered only when explicitly run
-                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Terraform Destroy', params.LAST_SUCCESSFUL_STAGE)
+                when {
+                    // Allow this to run regardless of other stages
+                    expression { return params.RUN_TERRAFORM_DESTROY  }
                 }
-            }
-            steps {
-                script {
-                    input message: "Do you want to proceed with Terraform Destroy?", ok: "Yes, proceed"
-
-                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
-                        sh '''
-                            echo "🔴 Starting Terraform Destroy..."
-                            cd ${TF_DIR}
-                            
-                            # Initialize Terraform
-                            terraform init
-                            
-                            # Destroy the infrastructure
-                            terraform destroy -auto-approve
-                            
-                            echo "✅ Terraform Destroy completed successfully"
-                        '''
-                        markStageComplete('Terraform Destroy')
+                steps {
+                    script {
+                        // Require explicit confirmation before destroying infrastructure
+                        input message: "⚠️ WARNING: Do you want to destroy the EKS infrastructure?", ok: "Yes, proceed with destruction"
+                        
+                        withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                            sh '''
+                                echo "🔴 Starting Terraform Destroy..."
+                                cd ${TF_DIR}
+                                
+                                # Initialize Terraform
+                                terraform init
+                                
+                                # Destroy the infrastructure
+                                terraform destroy -auto-approve
+                                
+                                echo "✅ Terraform Destroy completed successfully"
+                            '''
+                            markStageComplete('Terraform Destroy')
+                        }
                     }
                 }
             }
