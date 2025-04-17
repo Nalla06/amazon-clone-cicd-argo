@@ -6,7 +6,7 @@ pipeline {
         ECR_REPOSITORY = 'amazon-clone'
         IMAGE_NAME = 'amazon-clone'
         SONAR_PROJECT_KEY = 'amazon-clone'
-        SONAR_SERVER_URL = 'http://13.217.145.154:9000'
+        SONAR_SERVER_URL = 'http://34.235.159.248:9000'
         KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/amazon-clone-cicd-argo.git'
         KUBERNETES_MANIFEST_PATH = 'k8s-manifests/deployment.yml'
         EKS_CLUSTER_NAME = 'amazon-cluster'
@@ -22,7 +22,33 @@ pipeline {
                 sh 'git --version'
             }
         }
-
+        stage('Terraform EKS Setup') {
+            environment {
+                TF_CLI_ARGS = "-no-color"
+                TF_IN_AUTOMATION = "true"
+                TF_DIR = "/home/nalla/amazon-clone-cicd-agro/terraform-files/eks-setup"
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                    sh '''
+                        echo "🌍 Running Terraform for EKS infrastructure..."
+                        cd ${TF_DIR}
+                        
+                        # Initialize Terraform
+                        terraform init
+                        
+                        # Plan the changes
+                        terraform plan -out=tfplan
+                        
+                        # Apply the changes
+                        terraform apply -auto-approve tfplan
+                        
+                        echo "✅ Terraform EKS setup completed successfully"
+                    '''
+                }
+            }
+        }
         stage('Install Dependencies') {
             steps {
                 sh '''
