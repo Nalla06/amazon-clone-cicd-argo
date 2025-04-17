@@ -121,11 +121,11 @@ pipeline {
             steps {
                 withSonarQubeEnv('SonarQube') {
                     sh """
-                        /opt/sonar-scanner/bin/sonar-scanner -X \
-                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        sonar-scanner -X \
+                        -Dsonar.projectKey=amazon-clone \
                         -Dsonar.sources=. \
-                        -Dsonar.host.url=${SONAR_SERVER_URL} \
-                        -Dsonar.login=${SONAR_TOKEN} \
+                        -Dsonar.host.url=http://18.215.249.30:9000 \
+                        -Dsonar.login=$SONAR_TOKEN \
                         -Dsonar.tests=test \
                         -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
                     """
