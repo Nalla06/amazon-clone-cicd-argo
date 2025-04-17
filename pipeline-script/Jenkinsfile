@@ -12,7 +12,7 @@ pipeline {
         ECR_REPOSITORY = 'amazon-clone'
         IMAGE_NAME = 'amazon-clone'
         SONAR_PROJECT_KEY = 'amazon-clone'
-        SONAR_SERVER_URL = 'http://34.235.159.248:9000'
+        SONAR_SERVER_URL = 'http://18.215.249.30:9000'
         KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/amazon-clone-cicd-argo.git'
         KUBERNETES_MANIFEST_PATH = 'k8s-manifests/deployment.yml'
         EKS_CLUSTER_NAME = 'amazon-cluster'
