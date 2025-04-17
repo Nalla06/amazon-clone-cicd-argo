@@ -2,10 +2,11 @@ pipeline {
     agent any
 
     parameters {
-        booleanParam(name: 'RUN_TERRAFORM_DESTROY', defaultValue: false, description: 'Run Terraform Destroy stage')
-        booleanParam(name: 'SKIP_TERRAFORM', defaultValue: false, description: 'Skip Terraform EKS setup stage')
-        booleanParam(name: 'SKIP_COMPLETED_STAGES', defaultValue: false, description: 'Skip stages that completed successfully in previous build')
-        string(name: 'LAST_SUCCESSFUL_STAGE', defaultValue: '', description: 'Last successfully completed stage from previous build')
+        parameters {
+            booleanParam(name: 'RUN_TERRAFORM_DESTROY', defaultValue: false, description: 'Run Terraform Destroy stage')
+            booleanParam(name: 'SKIP_TERRAFORM', defaultValue: false, description: 'Skip Terraform EKS setup stage')
+            booleanParam(name: 'SKIP_COMPLETED_STAGES', defaultValue: false, description: 'Skip stages that completed successfully in previous build')
+            string(name: 'LAST_SUCCESSFUL_STAGE', defaultValue: '', description: 'Last successfully completed stage from previous build')
     }
 
     environment {
@@ -26,12 +27,14 @@ pipeline {
     
     stages {
         stage('Pipeline Setup') {
+            when {
+                not {
+                    expression { return params.RUN_TERRAFORM_DESTROY }
+                }
+            }
             steps {
                 script {
-                    // Create state directory if it doesn't exist
                     sh "mkdir -p ${STATE_DIR}"
-                    
-                    // If we're skipping completed stages, determine where to start
                     if (params.SKIP_COMPLETED_STAGES && params.LAST_SUCCESSFUL_STAGE) {
                         echo "🔄 Previous build failed after stage '${params.LAST_SUCCESSFUL_STAGE}'"
                         echo "🚀 Will start execution from the stage after '${params.LAST_SUCCESSFUL_STAGE}'"
@@ -41,6 +44,7 @@ pipeline {
                 }
             }
         }
+
 
         stage('Git Checkout') {
             when {
@@ -439,34 +443,24 @@ pipeline {
         
         stage('Terraform Destroy') {
             when {
-                // Allow this to run regardless of other stages
                 expression { return params.RUN_TERRAFORM_DESTROY }
             }
             steps {
                 script {
-                    // Require explicit confirmation before destroying infrastructure
                     input message: "⚠️ WARNING: Do you want to destroy the EKS infrastructure?", ok: "Yes, proceed with destruction"
-                    
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                         sh '''
                             echo "🔴 Starting Terraform Destroy..."
                             cd ${TF_DIR}
-                            
-                            # Initialize Terraform
                             terraform init
-                            
-                            # Destroy the infrastructure
                             terraform destroy -auto-approve
-                            
-                            echo "✅ Terraform Destroy completed successfully"
+                            echo " Terraform Destroy completed successfully"
                         '''
-                        markStageComplete('Terraform Destroy')
                     }
                 }
             }
         }
     }
-    
     post {
         success {
             echo "Pipeline executed successfully!"
