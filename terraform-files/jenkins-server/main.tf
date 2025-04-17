@@ -256,8 +256,8 @@ resource "aws_instance" "jenkins_server" {
   }
   
   provisioner "file" {
-    source      = "./configure-jenkins-credentials.sh"  # Add this new file
-    destination = "/tmp/configure-jenkins-credentials.sh"
+    source      = "./jenkins-credentials.sh"
+    destination = "/tmp/jenkins-credentials.sh"
     connection {
       type        = "ssh"
       private_key = data.aws_ssm_parameter.ssh_private_key.value
@@ -277,8 +277,12 @@ resource "aws_instance" "jenkins_server" {
     inline = [
       "chmod +x /tmp/install-script.sh",
       "sudo /tmp/install-script.sh",
-      "chmod +x /tmp/configure-jenkins-credentials.sh",
-      "sudo /tmp/configure-jenkins-credentials.sh"  # Run the credentials script after installation
+      # Add these lines to run the credentials script after Jenkins installation
+      "echo 'Waiting for Jenkins to fully initialize...'",
+      "sleep 60",  # Give Jenkins a bit more time to initialize completely
+      "chmod +x /tmp/jenkins-credentials.sh",
+      "echo 'Running Jenkins credentials setup...'",
+      "sudo /tmp/jenkins-credentials.sh"
     ]
   }
 }

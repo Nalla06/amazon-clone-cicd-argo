@@ -1,6 +1,6 @@
 #!/bin/bash
 
-# === PART 1: Install all required tools and services ===
+# === PART 1: Install Jenkins, SonarQube, and Required Tools ===
 
 # Update system packages
 echo "Updating system packages..."
@@ -18,7 +18,8 @@ sudo apt-get install -y \
     software-properties-common \
     wget \
     unzip \
-    git
+    git \
+    openjdk-17-jdk
 
 # Install Docker
 echo "Installing Docker..."
@@ -36,10 +37,6 @@ COMPOSE_VERSION=$(curl -s https://api.github.com/repos/docker/compose/releases/l
 sudo curl -L "https://github.com/docker/compose/releases/download/${COMPOSE_VERSION}/docker-compose-$(uname -s)-$(uname -m)" -o /usr/local/bin/docker-compose
 sudo chmod +x /usr/local/bin/docker-compose
 
-# Install Java
-echo "Installing Java..."
-sudo apt-get install -y openjdk-17-jdk
-
 # Install Jenkins
 echo "Installing Jenkins..."
 curl -fsSL https://pkg.jenkins.io/debian-stable/jenkins.io-2023.key | sudo tee /usr/share/keyrings/jenkins-keyring.asc > /dev/null
@@ -48,15 +45,6 @@ sudo apt-get update -y
 sudo apt-get install -y jenkins
 sudo systemctl enable jenkins
 sudo systemctl start jenkins
-# Install Node.js and npm (Added Node.js section)
-echo "Installing Node.js and npm..."
-curl -fsSL https://deb.nodesource.com/setup_16.x | sudo -E bash -
-sudo apt-get install -y nodejs
-
-# Verify installation
-echo "Node.js and npm version:"
-node -v
-npm -v
 
 # Install AWS CLI
 echo "Installing AWS CLI..."
@@ -65,27 +53,15 @@ unzip awscliv2.zip
 sudo ./aws/install
 rm -rf aws awscliv2.zip
 
-# Install Terraform
-echo "Installing Terraform..."
-TERRAFORM_VERSION="1.5.7"
-wget https://releases.hashicorp.com/terraform/${TERRAFORM_VERSION}/terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-unzip terraform_${TERRAFORM_VERSION}_linux_amd64.zip
-sudo mv terraform /usr/local/bin/
-rm terraform_${TERRAFORM_VERSION}_linux_amd64.zip
+# Wait for Jenkins to become available
+echo "Waiting for Jenkins to start..."
+timeout 300 bash -c 'until curl -s -f http://localhost:8080 > /dev/null; do echo "Waiting for Jenkins..."; sleep 5; done'
+echo "Jenkins is up and running!"
 
-# Install SonarQube Scanner CLI
-echo "Installing SonarQube Scanner..."
-SONAR_SCANNER_VERSION="4.8.0.2856"
-wget https://binaries.sonarsource.com/Distribution/sonar-scanner-cli/sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip
-unzip sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip
-sudo mv sonar-scanner-${SONAR_SCANNER_VERSION}-linux /opt/sonar-scanner
-echo 'export PATH=$PATH:/opt/sonar-scanner/bin' | sudo tee -a /etc/profile.d/sonar-scanner.sh
-source /etc/profile.d/sonar-scanner.sh
-rm sonar-scanner-cli-${SONAR_SCANNER_VERSION}-linux.zip
+# === PART 2: Install and Configure SonarQube ===
 
-# Install SonarQube Server using Docker (easier to maintain)
+# Install SonarQube Server using Docker
 echo "Installing SonarQube Server using Docker..."
-# Create necessary directories
 sudo mkdir -p /opt/sonarqube/data
 sudo mkdir -p /opt/sonarqube/logs
 sudo mkdir -p /opt/sonarqube/extensions
@@ -145,168 +121,135 @@ fs.file-max=65536
 EOF
 sudo sysctl -p
 
-# Configure SonarQube Scanner to use your SonarQube server
-echo "sonar.host.url=http://localhost:9000" | sudo tee -a /opt/sonar-scanner/conf/sonar-scanner.properties
-
 # Start SonarQube
 echo "Starting SonarQube..."
 cd /opt/sonarqube && sudo docker-compose up -d
 
-# Install Trivy
-echo "Installing Trivy..."
-wget -qO - https://aquasecurity.github.io/trivy-repo/deb/public.key | sudo apt-key add -
-echo deb https://aquasecurity.github.io/trivy-repo/deb $(lsb_release -sc) main | sudo tee -a /etc/apt/sources.list.d/trivy.list
-sudo apt-get update
-sudo apt-get install -y trivy
+# Wait for SonarQube to become ready
+echo "Waiting for SonarQube to become available..."
+timeout 300 bash -c 'until curl -s -f http://localhost:9000/api/system/status | grep -q "UP"; do echo "Waiting for SonarQube..."; sleep 10; done'
+echo "SonarQube is up and running at http://localhost:9000"
 
-# Setup Prometheus and Grafana
-echo "Installing Prometheus..."
-PROMETHEUS_VERSION="2.45.0"
-wget https://github.com/prometheus/prometheus/releases/download/v${PROMETHEUS_VERSION}/prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
-tar xvf prometheus-${PROMETHEUS_VERSION}.linux-amd64.tar.gz
-sudo mkdir -p /etc/prometheus /var/lib/prometheus
-sudo mv prometheus-${PROMETHEUS_VERSION}.linux-amd64/prometheus prometheus-${PROMETHEUS_VERSION}.linux-amd64/promtool /usr/local/bin/
-sudo mv prometheus-${PROMETHEUS_VERSION}.linux-amd64/consoles prometheus-${PROMETHEUS_VERSION}.linux-amd64/console_libraries /etc/prometheus/
-rm -rf prometheus-${PROMETHEUS_VERSION}.linux-amd64*
+# === PART 3: Configure Jenkins ===
 
-# Create a Prometheus user
-sudo useradd --no-create-home --shell /bin/false prometheus || true
-sudo chown -R prometheus:prometheus /etc/prometheus /var/lib/prometheus
+# Get Jenkins admin password
+JENKINS_ADMIN_PASSWORD=$(cat /var/lib/jenkins/secrets/initialAdminPassword)
+echo "Jenkins admin password: $JENKINS_ADMIN_PASSWORD"
+echo "Please use this password for initial Jenkins setup at http://your-server-ip:8080"
 
-# Create Prometheus service
-cat <<EOF | sudo tee /etc/systemd/system/prometheus.service
-[Unit]
-Description=Prometheus
-Wants=network-online.target
-After=network-online.target
+# Download Jenkins CLI
+echo "Downloading Jenkins CLI..."
+wget -q "http://localhost:8080/jnlpJars/jenkins-cli.jar" -O /tmp/jenkins-cli.jar
 
-[Service]
-User=prometheus
-Group=prometheus
-Type=simple
-ExecStart=/usr/local/bin/prometheus \
-    --config.file /etc/prometheus/prometheus.yml \
-    --storage.tsdb.path /var/lib/prometheus/ \
-    --web.console.templates=/etc/prometheus/consoles \
-    --web.console.libraries=/etc/prometheus/console_libraries
+# Install required Jenkins plugins
+echo "Installing required Jenkins plugins..."
+cat > /tmp/install-plugins.groovy << 'EOF'
+import jenkins.model.*
+import hudson.util.*
 
-[Install]
-WantedBy=multi-user.target
+def instance = Jenkins.getInstance()
+def pm = instance.getPluginManager()
+def uc = instance.getUpdateCenter()
+uc.updateAllSites()
+
+def plugins = [
+  "credentials",
+  "credentials-binding",
+  "plain-credentials",
+  "aws-credentials",
+  "docker-workflow",
+  "workflow-aggregator",
+  "git",
+  "blueocean",
+  "pipeline-github-lib",
+  "terraform",
+  "sonar",
+  "sonarqube-scanner",
+  "prometheus",
+  "ssh-slaves",
+  "docker-plugin",
+  "metrics",
+  "amazon-ecr",
+  "nodejs",
+  "pipeline-aws",
+  "pipeline-stage-view" 
+]
+plugins.each { plugin ->
+  if (!pm.getPlugin(plugin)) {
+    println "Installing ${plugin}..."
+    def installFuture = uc.getPlugin(plugin).deploy()
+    while(!installFuture.isDone()) {
+      println "Waiting for plugin installation: ${plugin}"
+      sleep(1000)
+    }
+  } else {
+    println "Plugin ${plugin} already installed."
+  }
+}
+
+instance.save()
+println "Plugins installation completed!"
 EOF
 
-# Create default Prometheus config
-cat <<EOF | sudo tee /etc/prometheus/prometheus.yml
-global:
-  scrape_interval: 15s
+cat /tmp/install-plugins.groovy | java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s http://localhost:8080 groovy =
 
-scrape_configs:
-  - job_name: 'prometheus'
-    scrape_interval: 5s
-    static_configs:
-      - targets: ['localhost:9090']
+# Restart Jenkins to apply plugin changes
+echo "Restarting Jenkins to apply plugin changes..."
+java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s http://localhost:8080 safe-restart
+
+echo "Waiting for Jenkins to restart..."
+sleep 30
+timeout 100 bash -c 'until curl -s -f http://localhost:8080 > /dev/null; do echo "Waiting for Jenkins restart..."; sleep 5; done'
+echo "Jenkins successfully restarted!"
+
+# === PART 4: Integrate Jenkins with SonarQube ===
+
+# Generate SonarQube token
+echo "Generating SonarQube token for Jenkins integration..."
+SONAR_USER="admin"
+SONAR_PASSWORD="admin"
+
+# Login to SonarQube and generate a token
+curl -X POST -c /tmp/cookies.txt "http://localhost:9000/api/authentication/login" -d "login=$SONAR_USER&password=$SONAR_PASSWORD"
+TOKEN_RESPONSE=$(curl -s -X POST -b /tmp/cookies.txt "http://localhost:9000/api/user_tokens/generate" -d "name=jenkins-integration")
+SONAR_TOKEN=$(echo $TOKEN_RESPONSE | grep -o '"token":"[^"]*' | awk -F':' '{print $2}' | tr -d '"')
+
+if [ -z "$SONAR_TOKEN" ]; then
+  echo "Failed to get SonarQube token. You may need to create one manually."
+else
+  echo "SonarQube token generated successfully!"
+  echo "SonarQube Token: $SONAR_TOKEN"
   
-  - job_name: 'jenkins'
-    metrics_path: '/prometheus'
-    static_configs:
-      - targets: ['localhost:8080']
-      
-  - job_name: 'sonarqube'
-    scrape_interval: 10s
-    metrics_path: '/api/monitoring/metrics'
-    static_configs:
-      - targets: ['localhost:9000']
+  # Add SonarQube token to Jenkins credentials
+  echo "Adding SonarQube token to Jenkins credentials..."
+  cat > /tmp/add-sonar-credential.groovy << EOF
+import jenkins.model.*
+import com.cloudbees.plugins.credentials.*
+import com.cloudbees.plugins.credentials.domains.*
+import org.jenkinsci.plugins.plaincredentials.impl.*
+import hudson.util.Secret
+
+def domain = Domain.global()
+def store = Jenkins.instance.getExtensionList('com.cloudbees.plugins.credentials.SystemCredentialsProvider')[0].getStore()
+
+def sonarToken = new StringCredentialsImpl(
+  CredentialsScope.GLOBAL,
+  "sonarqube-token",
+  "SonarQube Scanner Token",
+  Secret.fromString("$SONAR_TOKEN")
+)
+
+store.addCredentials(domain, sonarToken)
+println "SonarQube token added to Jenkins credentials"
 EOF
 
-sudo chown prometheus:prometheus /etc/prometheus/prometheus.yml
-
-# Install Grafana
-echo "Installing Grafana..."
-sudo apt-get install -y software-properties-common
-sudo wget -q -O /usr/share/keyrings/grafana.key https://apt.grafana.com/gpg.key
-echo "deb [signed-by=/usr/share/keyrings/grafana.key] https://apt.grafana.com stable main" | sudo tee -a /etc/apt/sources.list.d/grafana.list
-sudo apt-get update
-sudo apt-get install -y grafana
-sudo systemctl enable grafana-server
-sudo systemctl start grafana-server
-
-# Enable and start Prometheus
-sudo systemctl enable prometheus
-sudo systemctl start prometheus
-
-# Create Jenkins agent node setup script
-echo "Creating Jenkins agent setup script..."
-cat <<EOF | sudo tee /opt/setup-jenkins-node.sh
-#!/bin/bash
-
-# This script helps set up a new Jenkins agent node
-
-if [ \$# -ne 3 ]; then
-  echo "Usage: \$0 <node-name> <node-description> <number-of-executors>"
-  exit 1
+  cat /tmp/add-sonar-credential.groovy | java -jar /tmp/jenkins-cli.jar -auth admin:$JENKINS_ADMIN_PASSWORD -s http://localhost:8080 groovy =
 fi
 
-NODE_NAME=\$1
-NODE_DESCRIPTION=\$2
-EXECUTORS=\$3
-JENKINS_URL="http://localhost:8080"
-JENKINS_USER="admin"
-JENKINS_API_TOKEN=\$(sudo cat /var/lib/jenkins/secrets/initialAdminPassword)
+rm -f /tmp/cookies.txt /tmp/add-sonar-credential.groovy
 
-# Create the Jenkins agent user
-sudo adduser --disabled-password --gecos "" jenkins-agent
-sudo mkdir -p /home/jenkins-agent/.ssh
-sudo touch /home/jenkins-agent/.ssh/authorized_keys
-
-# Generate SSH key if it doesn't exist
-if [ ! -f /var/lib/jenkins/.ssh/id_rsa ]; then
-  sudo mkdir -p /var/lib/jenkins/.ssh
-  sudo ssh-keygen -t rsa -b 4096 -f /var/lib/jenkins/.ssh/id_rsa -N ""
-  sudo chown -R jenkins:jenkins /var/lib/jenkins/.ssh
-fi
-
-# Display the public key
-echo "Add this public key to the authorized_keys file on the agent node:"
-sudo cat /var/lib/jenkins/.ssh/id_rsa.pub
-
-# Wait for Jenkins to be fully up
-until curl -s -f "\${JENKINS_URL}" > /dev/null; do
-  echo "Waiting for Jenkins to start..."
-  sleep 5
-done
-
-echo "Jenkins is up, continuing with node configuration..."
-
-# Install Jenkins CLI
-curl -sO "\${JENKINS_URL}/jnlpJars/jenkins-cli.jar"
-
-# Create agent node configuration
-cat <<EOG > node.xml
-<?xml version="1.1" encoding="UTF-8"?>
-<slave>
-  <name>\${NODE_NAME}</name>
-  <description>\${NODE_DESCRIPTION}</description>
-  <remoteFS>/home/jenkins-agent</remoteFS>
-  <numExecutors>\${EXECUTORS}</numExecutors>
-  <mode>NORMAL</mode>
-  <retentionStrategy class="hudson.slaves.RetentionStrategy\$Always"/>
-  <launcher class="hudson.plugins.sshslaves.SSHLauncher" plugin="ssh-slaves">
-    <host>IP_ADDRESS_OF_AGENT</host>
-    <port>22</port>
-    <credentialsId>jenkins-agent-key</credentialsId>
-    <launchTimeoutSeconds>60</launchTimeoutSeconds>
-    <maxNumRetries>10</maxNumRetries>
-    <retryWaitTime>15</retryWaitTime>
-    <sshHostKeyVerificationStrategy class="hudson.plugins.sshslaves.verifiers.NonVerifyingKeyVerificationStrategy"/>
-  </launcher>
-  <label>\${NODE_NAME}</label>
-  <nodeProperties/>
-</slave>
-EOG
-
-echo "Replace 'IP_ADDRESS_OF_AGENT' in the node.xml file with the actual IP of your agent node."
-echo "Then use the following command to create the node in Jenkins:"
-echo "java -jar jenkins-cli.jar -s \${JENKINS_URL} -auth \${JENKINS_USER}:\${JENKINS_API_TOKEN} create-node \${NODE_NAME} < node.xml"
-
-echo "Node setup script created and ready to use!"
-EOF
-
+# Final Messages
+echo "===== Jenkins and SonarQube Setup Complete! ====="
+echo "Jenkins is running at http://localhost:8080"
+echo "Initial admin password: $JENKINS_ADMIN_PASSWORD"
+echo "SonarQube is running at http://localhost:9000 (default credentials: admin/admin)"
