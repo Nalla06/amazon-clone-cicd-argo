@@ -17,7 +17,7 @@ spec:
     spec:
       containers:
       - name: amazon-clone-container
-        image: 631172387421.dkr.ecr.us-east-1.amazonaws.com/amazon-clone:31
+        image: 631172387421.dkr.ecr.us-east-1.amazonaws.com/amazon-clone:15
         ports:
         - containerPort: 3000
 ...
