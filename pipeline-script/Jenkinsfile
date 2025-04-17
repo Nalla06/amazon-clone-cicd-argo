@@ -13,7 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
-        TF_DIR = "amazon-clone-cicd-agro/terraform-files/eks-setup"
+        TF_DIR = "terraform-files/eks-setup"
     }
     
     stages {
