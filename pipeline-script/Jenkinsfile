@@ -13,6 +13,7 @@ pipeline {
         GIT_CREDENTIALS_ID = 'github-credentials'
         AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
+        TF_DIR = "amazon-clone-cicd-agro/terraform-files/eks-setup"
     }
     
     stages {
@@ -26,7 +27,6 @@ pipeline {
             environment {
                 TF_CLI_ARGS = "-no-color"
                 TF_IN_AUTOMATION = "true"
-                TF_DIR = "/home/nalla/amazon-clone-cicd-agro/terraform-files/eks-setup"
             }
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
