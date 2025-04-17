@@ -425,7 +425,36 @@ pipeline {
             }
         }
     }
+    // Add Terraform Destroy stage at the end
+        stage('Terraform Destroy') {
+            when {
+                expression {
+                    // This stage is always manual and triggered only when explicitly run
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Terraform Destroy', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                script {
+                    input message: "Do you want to proceed with Terraform Destroy?", ok: "Yes, proceed"
 
+                    withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                        sh '''
+                            echo "🔴 Starting Terraform Destroy..."
+                            cd ${TF_DIR}
+                            
+                            # Initialize Terraform
+                            terraform init
+                            
+                            # Destroy the infrastructure
+                            terraform destroy -auto-approve
+                            
+                            echo "✅ Terraform Destroy completed successfully"
+                        '''
+                        markStageComplete('Terraform Destroy')
+                    }
+                }
+            }
+        }
     post {
         success {
             echo "Pipeline executed successfully!"

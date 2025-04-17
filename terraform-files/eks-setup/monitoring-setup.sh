@@ -94,8 +94,13 @@ sudo chown prometheus:prometheus /etc/prometheus/prometheus.yml
 # Enable and start Prometheus
 sudo systemctl enable prometheus
 sudo systemctl start prometheus
-
-
+## kubectl installtion
+sudo apt-get update
+sudo apt-get install -y apt-transport-https ca-certificates curl
+curl -fsSL https://packages.cloud.google.com/apt/doc/apt-key.gpg | sudo apt-key add -
+echo "deb https://apt.kubernetes.io/ kubernetes-xenial main" | sudo tee -a /etc/apt/sources.list.d/kubernetes.list
+sudo apt-get update
+sudo apt-get install -y kubectl
 # -------------------------
 # INSTALL GRAFANA
 # -------------------------
