@@ -10,8 +10,8 @@ pipeline {
         KUBERNETES_MANIFEST_REPO = 'https://github.com/Nalla06/amazon-clone-cicd-argo.git'
         KUBERNETES_MANIFEST_PATH = 'k8s-manifests/deployment.yml'
         EKS_CLUSTER_NAME = 'amazon-cluster'
-        GIT_CREDENTIALS_ID = 'github-credentials'
-        AWS_CREDENTIALS_ID = 'aws-ecr-credentials'
+        GIT_CREDENTIALS_ID = 'github-credentials-id'
+        AWS_CREDENTIALS_ID = 'aws-credentials-id'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         TF_DIR = "terraform-files/eks-setup"
     }
