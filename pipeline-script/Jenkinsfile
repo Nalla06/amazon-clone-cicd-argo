@@ -2,11 +2,19 @@ pipeline {
     agent any
 
     parameters {
-        booleanParam(name: 'RUN_TERRAFORM_DESTROY', defaultValue: false, description: 'Run Terraform Destroy stage')
-        booleanParam(name: 'SKIP_TERRAFORM', defaultValue: false, description: 'Skip Terraform EKS setup stage')
-        booleanParam(name: 'SKIP_COMPLETED_STAGES', defaultValue: false, description: 'Skip stages that completed successfully in previous build')
-        string(name: 'LAST_SUCCESSFUL_STAGE', defaultValue: '', description: 'Last successfully completed stage from previous build')
-}
+        booleanParam(name: 'RUN_TERRAFORM_DESTROY', 
+                    defaultValue: false, 
+                    description: 'Run ONLY Terraform Destroy stage')
+        booleanParam(name: 'SKIP_TERRAFORM', 
+                    defaultValue: false, 
+                    description: 'Skip Terraform EKS setup stage')
+        booleanParam(name: 'SKIP_COMPLETED_STAGES', 
+                    defaultValue: false, 
+                    description: 'Skip stages that completed successfully in previous build')
+        string(name: 'LAST_SUCCESSFUL_STAGE', 
+                    defaultValue: '', 
+                    description: 'Last successfully completed stage from previous build')
+    }
 
     environment {
         AWS_REGION = 'us-east-1'
@@ -27,8 +35,8 @@ pipeline {
     stages {
         stage('Pipeline Setup') {
             when {
-                not {
-                    expression { return params.RUN_TERRAFORM_DESTROY }
+                allOf {
+                    not { expression { params.RUN_TERRAFORM_DESTROY } }
                 }
             }
             steps {
@@ -47,8 +55,8 @@ pipeline {
 
         stage('Git Checkout') {
             when {
-                expression {
-                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Git Checkout', params.LAST_SUCCESSFUL_STAGE)
+                allOf {
+                    not { expression { params.RUN_TERRAFORM_DESTROY } }
                 }
             }
             steps {
@@ -446,7 +454,10 @@ pipeline {
             }
             steps {
                 script {
-                    input message: "⚠️ WARNING: Do you want to destroy the EKS infrastructure?", ok: "Yes, proceed with destruction"
+                    timeout(time: 15, unit: 'MINUTES') {
+                        input message: "WARNING: Destroy EKS infrastructure?", 
+                            ok: "Confirm Destruction"
+                    }
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                         sh '''
                             echo "🔴 Starting Terraform Destroy..."
