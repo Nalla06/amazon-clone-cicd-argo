@@ -19,4 +19,5 @@ module "vpc" {
   private_subnet_tags = {
     "kubernetes.io/role/internal-elb" = 1
   }
+  enable_dns_hostnames = true  # Ensure DNS hostnames are enabled for public access
 }

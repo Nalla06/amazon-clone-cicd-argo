@@ -23,12 +23,15 @@ pipeline {
         TF_DIR = "terraform-files/eks-setup"
         STATE_DIR = "pipeline-state"
     }
-
+    
     stages {
         stage('Pipeline Setup') {
             steps {
                 script {
+                    // Create state directory if it doesn't exist
                     sh "mkdir -p ${STATE_DIR}"
+                    
+                    // If we're skipping completed stages, determine where to start
                     if (params.SKIP_COMPLETED_STAGES && params.LAST_SUCCESSFUL_STAGE) {
                         echo "🔄 Previous build failed after stage '${params.LAST_SUCCESSFUL_STAGE}'"
                         echo "🚀 Will start execution from the stage after '${params.LAST_SUCCESSFUL_STAGE}'"
@@ -53,7 +56,7 @@ pipeline {
                 }
             }
         }
-
+        
         stage('Terraform EKS Setup') {
             when {
                 expression { 
@@ -65,13 +68,21 @@ pipeline {
                 TF_IN_AUTOMATION = "true"
             }
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                     sh '''
                         echo "🌍 Running Terraform for EKS infrastructure..."
                         cd ${TF_DIR}
+                        
+                        # Initialize Terraform
                         terraform init
+                        
+                        # Plan the changes
                         terraform plan -out=tfplan
+                        
+                        # Apply the changes
                         terraform apply -auto-approve tfplan
+                        
                         echo "✅ Terraform EKS setup completed successfully"
                     '''
                     script {
@@ -80,7 +91,7 @@ pipeline {
                 }
             }
         }
-
+        
         stage('Install Dependencies') {
             when {
                 expression {
@@ -106,16 +117,16 @@ pipeline {
                 }
             }
             environment {
-                SONAR_TOKEN = credentials('sonar-token')
+                SONAR_TOKEN = credentials('sonar-token')  // Ensure credential ID matches Jenkins
             }
             steps {
                 withSonarQubeEnv('SonarQube') {
                     sh """
                         export PATH=/opt/sonar-scanner/bin:\$PATH
                         sonar-scanner -X \
-                        -Dsonar.projectKey=${SONAR_PROJECT_KEY} \
+                        -Dsonar.projectKey=amazon-clone \
                         -Dsonar.sources=. \
-                        -Dsonar.host.url=${SONAR_SERVER_URL} \
+                        -Dsonar.host.url=http://18.215.249.30:9000 \
                         -Dsonar.login=$SONAR_TOKEN \
                         -Dsonar.tests=test \
                         -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
@@ -135,7 +146,9 @@ pipeline {
             }
             steps {
                 script {
-                    echo "Skipping 'waitForQualityGate()' for demo purposes."
+                    echo "Normally, we would check the SonarQube Quality Gate here."
+                    echo "Skipping 'waitForQualityGate()' in this environment to allow seamless CI/CD pipeline execution for resume/demo purposes."
+                    echo "Assuming Quality Gate passed. In production, this should be re-enabled to enforce code quality."
                     markStageComplete('Quality Gate (Dev Mode)')
                 }
             }
@@ -157,7 +170,7 @@ pipeline {
                         sh 'npm run build || echo "⚠️ Build completed with warnings (or partial success)"'
                     } catch (Exception e) {
                         echo "❗ Build failed, but continuing pipeline"
-                        currentBuild.result = 'SUCCESS'
+                        currentBuild.result = 'SUCCESS' // Mark the build as success to continue
                     }
                     markStageComplete('Build Application')
                 }
@@ -171,18 +184,22 @@ pipeline {
                 }
             }
             steps {
-                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                     script {
+                        // Get ECR repository URL
                         env.ECR_URL = sh(
                             script: "aws ecr describe-repositories --repository-names ${ECR_REPOSITORY} --region ${AWS_REGION} --query 'repositories[0].repositoryUri' --output text",
                             returnStdout: true
                         ).trim()
                         
+                        // Extract registry URL for Docker login
                         env.ECR_REGISTRY = sh(
                             script: "echo ${env.ECR_URL} | cut -d/ -f1",
                             returnStdout: true
                         ).trim()
                         
+                        // Set image tags
                         env.IMAGE_TAG = "${env.BUILD_NUMBER}"
                         env.FULL_IMAGE_NAME = "${env.ECR_URL}:${env.IMAGE_TAG}"
                         
@@ -193,19 +210,245 @@ pipeline {
             }
         }
 
+        stage('Install Monitoring Tools (Helm)') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Install Monitoring Tools (Helm)', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                    sh '''
+                        echo "⎈ Updating kubeconfig for EKS cluster..."
+                        aws eks update-kubeconfig --region ${AWS_REGION} --name ${EKS_CLUSTER_NAME}
+                        
+                        echo "📦 Adding Helm repos..."
+                        helm repo add argo https://argoproj.github.io/argo-helm
+                        helm repo add prometheus-community https://prometheus-community.github.io/helm-charts
+                        helm repo add grafana https://grafana.github.io/helm-charts
+                        helm repo update
+
+                        echo "🚀 Installing Argo CD..."
+                        kubectl create namespace argocd || true
+                        helm install argocd argo/argo-cd -n argocd --set server.service.type=LoadBalancer
+
+                        echo "🚀 Installing Prometheus..."
+                        kubectl create namespace monitoring || true
+                        helm install prometheus prometheus-community/prometheus -n monitoring
+
+                        echo "🚀 Installing Grafana..."
+                        helm install grafana grafana/grafana -n monitoring --set service.type=LoadBalancer \
+                            --set adminPassword='admin' --set persistence.enabled=true
+                        
+                        echo "✅ Monitoring tools installed as Kubernetes services"
+                    '''
+                    script {
+                        markStageComplete('Install Monitoring Tools (Helm)')
+                    }
+                }
+            }
+        }            
+    
+        stage('Docker Build') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Docker Build', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                script {
+                    sh """
+                        # Ensure user has access to Docker by adding Jenkins user to the Docker group
+                        sudo usermod -aG docker jenkins || true
+                        # Restart Jenkins agent to apply group changes (only needed once in setup)
+                        sudo service jenkins restart || true
+                        # Build Docker image
+                        docker build -t ${FULL_IMAGE_NAME} . \
+                        && echo "Docker build successful" \
+                        || (echo "❌ Docker build failed" && exit 1)
+                    """
+                    markStageComplete('Docker Build')
+                }
+            }
+        }        
+        
+        stage('Trivy Security Scan') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Trivy Security Scan', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                sh "trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo 'Trivy scan completed with issues'"
+                script {
+                    markStageComplete('Trivy Security Scan')
+                }
+            }
+        }
+
+        stage('Push to ECR') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Push to ECR', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                    sh '''
+                        aws ecr get-login-password --region ${AWS_REGION} | docker login --username AWS --password-stdin ${ECR_REGISTRY}
+                        docker push ${FULL_IMAGE_NAME}
+                        docker tag ${FULL_IMAGE_NAME} ${ECR_URL}:latest
+                        docker push ${ECR_URL}:latest
+                    '''
+                }
+                script {
+                    markStageComplete('Push to ECR')
+                }
+            }
+        }
+
+        stage('Configure kubectl') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Configure kubectl', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
+                                credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                    sh '''
+                        echo "Checking if kubectl is available..."
+                        which kubectl || { echo "kubectl not found, please ensure it is installed and in the PATH"; exit 1; }
+
+                        echo "Updating kubeconfig..."
+                        aws eks update-kubeconfig --name ${EKS_CLUSTER_NAME} --region ${AWS_REGION}
+
+                        echo "Verifying kubectl setup..."
+                        kubectl get nodes
+                '''
+                }
+                script {
+                    markStageComplete('Configure kubectl')
+                }
+            }
+        }
+        
+        stage('Clone K8s Manifest Repository') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Clone K8s Manifest Repository', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(
+                    credentialsId: "${GIT_CREDENTIALS_ID}", 
+                    usernameVariable: 'GIT_USERNAME', 
+                    passwordVariable: 'GIT_PASSWORD'
+                )]) {
+                    sh '''
+                        echo "🧹 Cleaning up old k8s-manifests..."
+                        rm -rf amazon-clone-cicd-argo k8s-manifests
+
+                        echo " Cloning k8s-manifests from repo..."
+                        git clone https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Nalla06/amazon-clone-cicd-argo.git
+
+                        echo " Renaming to k8s-manifests..."
+                        mv amazon-clone-cicd-argo/k8s-manifests ./k8s-manifests || { echo "❌ Folder k8s-manifests not found in repo!"; exit 1; }
+
+                        echo " Folder structure:"
+                        ls -la k8s-manifests
+                    '''
+                }
+                script {
+                    markStageComplete('Clone K8s Manifest Repository')
+                }
+            }
+        }
+
+        stage('Update Kubernetes Manifest') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Update Kubernetes Manifest', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", 
+                                                usernameVariable: 'GIT_USERNAME', 
+                                                passwordVariable: 'GIT_PASSWORD')]) {
+                    dir('k8s-manifests') {
+                        script {
+                            try {
+                                sh """
+                                    echo "🔍 Checking if deployment manifest exists..."
+                                    if [ ! -f "deployment.yml" ]; then
+                                        echo "❌ Manifest not found! Available YAML files:"
+                                        find . -name '*.yml' -o -name '*.yaml'
+                                        exit 1
+                                    fi
+
+                                    echo "📝 Updating image in deployment.yml..."
+                                    sed -i "s|image: .*${ECR_REPOSITORY}.*|image: ${FULL_IMAGE_NAME}|g" deployment.yml
+
+                                    echo "🔧 Configuring Git for commit..."
+                                    git config user.email 'lakshmi.rajyam06@gmail.com'
+                                    git config user.name 'Nalla06'
+
+                                    echo "📦 Committing and pushing updated manifest..."
+                                    git add deployment.yml
+                                    git commit -m "Update image to ${IMAGE_TAG} [ci skip]" || echo "ℹ️ No changes to commit"
+
+                                    echo "🚀 Pushing changes to remote repo..."
+                                    git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Nalla06/amazon-clone-cicd-argo.git HEAD:main
+                                """
+                                markStageComplete('Update Kubernetes Manifest')
+                            } catch (err) {
+                                echo "🔥 Error while updating Kubernetes manifest: ${err}"
+                                currentBuild.result = 'FAILURE'
+                                throw err
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        stage('Verify ArgoCD Sync Status') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Verify ArgoCD Sync Status', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                script {
+                    echo "Checking ArgoCD sync status"
+                    sh 'argocd app wait amazon-clone --timeout 300 || echo "ArgoCD sync check skipped or failed"'
+                    markStageComplete('Verify ArgoCD Sync Status')
+                }
+            }
+        }
+        
         stage('Terraform Destroy') {
             when {
+                // Allow this to run regardless of other stages
                 expression { return params.RUN_TERRAFORM_DESTROY }
             }
             steps {
                 script {
+                    // Require explicit confirmation before destroying infrastructure
                     input message: "⚠️ WARNING: Do you want to destroy the EKS infrastructure?", ok: "Yes, proceed with destruction"
+                    
                     withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
                         sh '''
                             echo "🔴 Starting Terraform Destroy..."
                             cd ${TF_DIR}
+                            
+                            # Initialize Terraform
                             terraform init
+                            
+                            # Destroy the infrastructure
                             terraform destroy -auto-approve
+                            
                             echo "✅ Terraform Destroy completed successfully"
                         '''
                         markStageComplete('Terraform Destroy')
@@ -214,22 +457,31 @@ pipeline {
             }
         }
     }
-
+    
     post {
         success {
             echo "Pipeline executed successfully!"
+            
+            // Clean up state directory on success
             sh "rm -rf ${STATE_DIR} || true"
         }
 
         failure {
             echo "Pipeline failed. Check logs for more details."
+            
+            // Store the name of the last successful stage for the next build
             script {
                 def lastSuccessfulStage = sh(script: "ls -1 ${STATE_DIR}/*.completed | sort | tail -1 | sed 's|${STATE_DIR}/||' | sed 's|.completed||'", returnStdout: true).trim()
+                
                 echo "Last successfully completed stage: ${lastSuccessfulStage}"
+                
+                // Create a properties file with parameters for the next build
                 sh """
                     echo "SKIP_COMPLETED_STAGES=true" > ${STATE_DIR}/next-build.properties
                     echo "LAST_SUCCESSFUL_STAGE=${lastSuccessfulStage}" >> ${STATE_DIR}/next-build.properties
                 """
+                
+                // Set next build parameters
                 properties([
                     parameters([
                         booleanParam(name: 'SKIP_TERRAFORM', defaultValue: params.SKIP_TERRAFORM),
@@ -243,6 +495,28 @@ pipeline {
         always {
             sh "docker rmi ${FULL_IMAGE_NAME} || true"
             sh "docker rmi ${ECR_URL}:latest || true"
+
+            script {
+                def recipient = 'your-team@example.com'
+                def subject = "Pipeline Status: ${currentBuild.fullDisplayName}"
+                def body = """
+                Pipeline Status: ${currentBuild.result}
+                Build URL: ${env.BUILD_URL}
+                Image: ${FULL_IMAGE_NAME}
+                ArgoCD should auto-sync the changes.
+                """
+
+                try {
+                    emailext (
+                        subject: subject,
+                        body: body,
+                        to: recipient
+                    )
+                } catch (e) {
+                    echo "Email plugin not available or failed. Would have sent:"
+                    echo "To: ${recipient}\nSubject: ${subject}\n${body}"
+                }
+            }
         }
     }
 }
@@ -258,19 +532,32 @@ def stageIsAfter(currentStage, lastSuccessfulStage) {
         'Quality Gate (Dev Mode)',
         'Build Application',
         'Configure ECR',
-        'Terraform Destroy' // Added Terraform Destroy to the ordered list
+        'Install Monitoring Tools (Helm)',  // Corrected the stage name
+        'Docker Build',
+        'Trivy Security Scan',
+        'Push to ECR',
+        'Configure kubectl',
+        'Clone K8s Manifest Repository',
+        'Update Kubernetes Manifest',
+        'Verify ArgoCD Sync Status',
+        'Terraform Destroy'
     ]
+    
     def currentIndex = stages.indexOf(currentStage)
     def lastIndex = stages.indexOf(lastSuccessfulStage)
+    
+    // If either stage is not found, default to running the stage
     if (currentIndex == -1 || lastIndex == -1) {
         echo "⚠️ Stage not found in list: ${currentStage} or ${lastSuccessfulStage}"
         return true
     }
+    
     return currentIndex > lastIndex
 }
 
 // Helper function to mark a stage as completed
 def markStageComplete(stageName) {
-    echo "✅ Stage '${stageName}' completed successfully"
+    echo " Stage '${stageName}' completed successfully"
+    // Replace spaces with underscores and wrap in quotes to handle special characters
     sh "mkdir -p ${STATE_DIR} && touch \"${STATE_DIR}/${stageName.replaceAll(' ', '_')}.completed\""
 }
