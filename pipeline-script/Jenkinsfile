@@ -145,9 +145,9 @@ pipeline {
             }
             steps {
                 script {
-                    echo "🔍 Normally, we would check the SonarQube Quality Gate here."
-                    echo "🚧 Skipping 'waitForQualityGate()' in this environment to allow seamless CI/CD pipeline execution for resume/demo purposes."
-                    echo "✅ Assuming Quality Gate passed. In production, this should be re-enabled to enforce code quality."
+                    echo "Normally, we would check the SonarQube Quality Gate here."
+                    echo "Skipping 'waitForQualityGate()' in this environment to allow seamless CI/CD pipeline execution for resume/demo purposes."
+                    echo "Assuming Quality Gate passed. In production, this should be re-enabled to enforce code quality."
                     markStageComplete('Quality Gate (Dev Mode)')
                 }
             }
@@ -524,6 +524,7 @@ def stageIsAfter(currentStage, lastSuccessfulStage) {
 
 // Helper function to mark a stage as completed
 def markStageComplete(stageName) {
-    echo "✅ Stage '${stageName}' completed successfully"
-    sh "mkdir -p ${STATE_DIR} && touch ${STATE_DIR}/${stageName}.completed"
+    echo " Stage '${stageName}' completed successfully"
+    // Replace spaces with underscores and wrap in quotes to handle special characters
+    sh "mkdir -p ${STATE_DIR} && touch \"${STATE_DIR}/${stageName.replaceAll(' ', '_')}.completed\""
 }
