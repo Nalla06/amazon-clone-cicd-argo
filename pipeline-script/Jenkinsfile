@@ -1,6 +1,12 @@
 pipeline {
     agent any
 
+    parameters {
+        booleanParam(name: 'SKIP_TERRAFORM', defaultValue: false, description: 'Skip Terraform EKS setup stage')
+        booleanParam(name: 'SKIP_COMPLETED_STAGES', defaultValue: false, description: 'Skip stages that completed successfully in previous build')
+        string(name: 'LAST_SUCCESSFUL_STAGE', defaultValue: '', description: 'Last successfully completed stage from previous build')
+    }
+
     environment {
         AWS_REGION = 'us-east-1'
         ECR_REPOSITORY = 'amazon-clone'
@@ -14,16 +20,48 @@ pipeline {
         AWS_CREDENTIALS_ID = 'aws-credentials-id'
         JAVA_HOME = '/usr/lib/jvm/java-17-openjdk-amd64'
         TF_DIR = "terraform-files/eks-setup"
+        STATE_DIR = "pipeline-state"
     }
     
     stages {
+        stage('Pipeline Setup') {
+            steps {
+                script {
+                    // Create state directory if it doesn't exist
+                    sh "mkdir -p ${STATE_DIR}"
+                    
+                    // If we're skipping completed stages, determine where to start
+                    if (params.SKIP_COMPLETED_STAGES && params.LAST_SUCCESSFUL_STAGE) {
+                        echo "🔄 Previous build failed after stage '${params.LAST_SUCCESSFUL_STAGE}'"
+                        echo "🚀 Will start execution from the stage after '${params.LAST_SUCCESSFUL_STAGE}'"
+                    } else {
+                        echo "🔄 Running full pipeline execution"
+                    }
+                }
+            }
+        }
+
         stage('Git Checkout') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Git Checkout', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 checkout scm
                 sh 'git --version'
+                script {
+                    markStageComplete('Git Checkout')
+                }
             }
         }
+        
         stage('Terraform EKS Setup') {
+            when {
+                expression { 
+                    return !params.SKIP_TERRAFORM && (!params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Terraform EKS Setup', params.LAST_SUCCESSFUL_STAGE))
+                }
+            }
             environment {
                 TF_CLI_ARGS = "-no-color"
                 TF_IN_AUTOMATION = "true"
@@ -46,20 +84,37 @@ pipeline {
                         
                         echo "✅ Terraform EKS setup completed successfully"
                     '''
+                    script {
+                        markStageComplete('Terraform EKS Setup')
+                    }
                 }
             }
         }
+        
         stage('Install Dependencies') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Install Dependencies', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 sh '''
                     echo "Verifying Node.js and npm installation..."
                     node --version
                     npm --version
                 '''
+                script {
+                    markStageComplete('Install Dependencies')
+                }
             }
         }
 
         stage('Code Quality Analysis') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Code Quality Analysis', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             environment {
                 SONAR_TOKEN = credentials('sonar-token')  // Ensure credential ID matches Jenkins
             }
@@ -75,20 +130,34 @@ pipeline {
                         -Dsonar.exclusions=node_modules/**,test/**,**/*.test.js,**/*.spec.js
                     """
                 }
+                script {
+                    markStageComplete('Code Quality Analysis')
+                }
             }
         }
 
         stage('Quality Gate (Dev Mode)') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Quality Gate (Dev Mode)', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 script {
                     echo "🔍 Normally, we would check the SonarQube Quality Gate here."
                     echo "🚧 Skipping 'waitForQualityGate()' in this environment to allow seamless CI/CD pipeline execution for resume/demo purposes."
                     echo "✅ Assuming Quality Gate passed. In production, this should be re-enabled to enforce code quality."
+                    markStageComplete('Quality Gate (Dev Mode)')
                 }
             }
         }
 
         stage('Build Application') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Build Application', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 script {
                     echo "🔧 Installing dependencies..."
@@ -101,11 +170,17 @@ pipeline {
                         echo "❗ Build failed, but continuing pipeline"
                         currentBuild.result = 'SUCCESS' // Mark the build as success to continue
                     }
+                    markStageComplete('Build Application')
                 }
             }
         }
 
         stage('Configure ECR') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Configure ECR', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
                                 credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
@@ -127,12 +202,55 @@ pipeline {
                         env.FULL_IMAGE_NAME = "${env.ECR_URL}:${env.IMAGE_TAG}"
                         
                         echo "ECR Configuration: ${env.FULL_IMAGE_NAME}"
+                        markStageComplete('Configure ECR')
                     }
                 }
             }
         }
 
+        stage('Setup Monitoring') {
+            when {
+                expression {
+                    !params.SKIP_COMPLETED_STAGES || !params.LAST_SUCCESSFUL_STAGE || stageIsAfter('Setup Monitoring', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
+            steps {
+                withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
+                    script {
+                        echo "🔔 Setting up monitoring for the application..."
+
+                        def scriptPath = 'terraform-files/eks-setup/monitoring-setup.sh'
+
+                        if (fileExists(scriptPath)) {
+                            sh """
+                                chmod +x ${scriptPath}
+                                ${scriptPath} --region=${AWS_REGION} --cluster=${EKS_CLUSTER_NAME} --app=${IMAGE_NAME}
+                            """
+                            echo "✅ Monitoring setup completed"
+                        } else {
+                            echo "⚠️ ${scriptPath} not found. Creating a placeholder script..."
+                            writeFile file: scriptPath, text: """#!/bin/bash
+                                echo "Setting up monitoring for EKS"
+                                echo "Region: \$1, Cluster: \$2, App: \$3"
+                                echo "This is a placeholder for Prometheus & Grafana setup."
+                            """
+                            sh "chmod +x ${scriptPath} && ${scriptPath} ${AWS_REGION} ${EKS_CLUSTER_NAME} ${IMAGE_NAME}"
+                            echo "⚠️ Placeholder script executed. Replace with actual implementation."
+                        }
+
+                        markStageComplete('Setup Monitoring')
+                    }
+                }
+            }
+        }
+
+
         stage('Docker Build') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Docker Build', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 script {
                     sh """
@@ -145,16 +263,31 @@ pipeline {
                         && echo "Docker build successful" \
                         || (echo "❌ Docker build failed" && exit 1)
                     """
+                    markStageComplete('Docker Build')
                 }
             }
         }        
+        
         stage('Trivy Security Scan') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Trivy Security Scan', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 sh "trivy image --severity HIGH,CRITICAL --no-progress ${FULL_IMAGE_NAME} || echo 'Trivy scan completed with issues'"
+                script {
+                    markStageComplete('Trivy Security Scan')
+                }
             }
         }
 
         stage('Push to ECR') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Push to ECR', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
                                 credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
@@ -165,10 +298,18 @@ pipeline {
                         docker push ${ECR_URL}:latest
                     '''
                 }
+                script {
+                    markStageComplete('Push to ECR')
+                }
             }
         }
 
         stage('Configure kubectl') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Configure kubectl', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 withCredentials([[$class: 'AmazonWebServicesCredentialsBinding', 
                                 credentialsId: "${AWS_CREDENTIALS_ID}"]]) {
@@ -183,9 +324,18 @@ pipeline {
                         kubectl get nodes
                 '''
                 }
+                script {
+                    markStageComplete('Configure kubectl')
+                }
             }
         }
+        
         stage('Clone K8s Manifest Repository') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Clone K8s Manifest Repository', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 withCredentials([usernamePassword(
                     credentialsId: "${GIT_CREDENTIALS_ID}", 
@@ -206,10 +356,18 @@ pipeline {
                         ls -la k8s-manifests
                     '''
                 }
+                script {
+                    markStageComplete('Clone K8s Manifest Repository')
+                }
             }
         }
 
         stage('Update Kubernetes Manifest') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Update Kubernetes Manifest', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 withCredentials([usernamePassword(credentialsId: "${GIT_CREDENTIALS_ID}", 
                                                 usernameVariable: 'GIT_USERNAME', 
@@ -239,6 +397,7 @@ pipeline {
                                     echo "🚀 Pushing changes to remote repo..."
                                     git push https://${GIT_USERNAME}:${GIT_PASSWORD}@github.com/Nalla06/amazon-clone-cicd-argo.git HEAD:main
                                 """
+                                markStageComplete('Update Kubernetes Manifest')
                             } catch (err) {
                                 echo "🔥 Error while updating Kubernetes manifest: ${err}"
                                 currentBuild.result = 'FAILURE'
@@ -250,12 +409,17 @@ pipeline {
             }
         }
 
-
         stage('Verify ArgoCD Sync Status') {
+            when {
+                expression {
+                    return !params.SKIP_COMPLETED_STAGES || params.LAST_SUCCESSFUL_STAGE == '' || stageIsAfter('Verify ArgoCD Sync Status', params.LAST_SUCCESSFUL_STAGE)
+                }
+            }
             steps {
                 script {
                     echo "Checking ArgoCD sync status"
                     sh 'argocd app wait amazon-clone --timeout 300 || echo "ArgoCD sync check skipped or failed"'
+                    markStageComplete('Verify ArgoCD Sync Status')
                 }
             }
         }
@@ -264,10 +428,35 @@ pipeline {
     post {
         success {
             echo "Pipeline executed successfully!"
+            
+            // Clean up state directory on success
+            sh "rm -rf ${STATE_DIR} || true"
         }
 
         failure {
             echo "Pipeline failed. Check logs for more details."
+            
+            // Store the name of the last successful stage for the next build
+            script {
+                def lastSuccessfulStage = sh(script: "ls -1 ${STATE_DIR}/*.completed | sort | tail -1 | sed 's|${STATE_DIR}/||' | sed 's|.completed||'", returnStdout: true).trim()
+                
+                echo "Last successfully completed stage: ${lastSuccessfulStage}"
+                
+                // Create a properties file with parameters for the next build
+                sh """
+                    echo "SKIP_COMPLETED_STAGES=true" > ${STATE_DIR}/next-build.properties
+                    echo "LAST_SUCCESSFUL_STAGE=${lastSuccessfulStage}" >> ${STATE_DIR}/next-build.properties
+                """
+                
+                // Set next build parameters
+                properties([
+                    parameters([
+                        booleanParam(name: 'SKIP_TERRAFORM', defaultValue: params.SKIP_TERRAFORM),
+                        booleanParam(name: 'SKIP_COMPLETED_STAGES', defaultValue: true),
+                        string(name: 'LAST_SUCCESSFUL_STAGE', defaultValue: lastSuccessfulStage)
+                    ])
+                ])
+            }
         }
 
         always {
@@ -297,4 +486,43 @@ pipeline {
             }
         }
     }
+}
+
+// Helper function to determine if a stage should be executed
+def stageIsAfter(currentStage, lastSuccessfulStage) {
+    def stages = [
+        'Pipeline Setup',
+        'Git Checkout',
+        'Terraform EKS Setup',
+        'Install Dependencies',
+        'Code Quality Analysis',
+        'Quality Gate (Dev Mode)',
+        'Build Application',
+        'Configure ECR',
+        'Setup Monitoring',  // Added the new monitoring stage to the ordered list
+        'Docker Build',
+        'Trivy Security Scan',
+        'Push to ECR',
+        'Configure kubectl',
+        'Clone K8s Manifest Repository',
+        'Update Kubernetes Manifest',
+        'Verify ArgoCD Sync Status'
+    ]
+    
+    def currentIndex = stages.indexOf(currentStage)
+    def lastIndex = stages.indexOf(lastSuccessfulStage)
+    
+    // If either stage is not found, default to running the stage
+    if (currentIndex == -1 || lastIndex == -1) {
+        echo "⚠️ Stage not found in list: ${currentStage} or ${lastSuccessfulStage}"
+        return true
+    }
+    
+    return currentIndex > lastIndex
+}
+
+// Helper function to mark a stage as completed
+def markStageComplete(stageName) {
+    echo "✅ Stage '${stageName}' completed successfully"
+    sh "mkdir -p ${STATE_DIR} && touch ${STATE_DIR}/${stageName}.completed"
 }
