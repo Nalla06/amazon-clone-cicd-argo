@@ -6,6 +6,11 @@ This project showcases a fully automated CI/CD pipeline for deploying an Amazon 
 # Your Pipeline Overview
 ![Image1](images/image1.jpg)
 ![Image2](images/image2.png)
+![Image2](images/image3.png)
+![Image2](images/image4.png)
+![Image2](images/image5.png)
+![Image2](images/image6.png)
+![Image2](images/image7.png)
 
 
 📌 Key Features
