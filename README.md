@@ -4,14 +4,15 @@
 This project showcases a fully automated CI/CD pipeline for deploying an Amazon Clone Application using Jenkins, Docker, Kubernetes (EKS), ArgoCD, and AWS services. It also integrates monitoring, logging, and security best practices.
 ![Overal pic of pipeline](images/image1.jpg)
 
-# Pipeline Overview
-📌 Key Features
-✅ Automated CI/CD Pipeline using Jenkins & ArgoCD
-✅ Containerized Deployment with Docker & Kubernetes (EKS)
-✅ GitOps Workflow using ArgoCD for seamless deployment
-✅ Monitoring & Logging with Prometheus, Grafana, ELK Stack, Fluent Bit
-✅ Secure & Scalable Infrastructure on AWS Cloud
-✅ High Availability & Load Balancing with AWS ALB & Ingress Controller
+## 📌 Key Features
+
+- ✅ Automated CI/CD Pipeline using Jenkins & ArgoCD  
+- ✅ Containerized Deployment with Docker & Kubernetes (EKS)  
+- ✅ GitOps Workflow using ArgoCD for seamless deployment  
+- ✅ Monitoring & Logging with Prometheus, Grafana, ELK Stack, Fluent Bit  
+- ✅ Secure & Scalable Infrastructure on AWS Cloud  
+- ✅ High Availability & Load Balancing with AWS ALB & Ingress Controller  
+
 # Images takes when doing this project
 
 ![Image2](images/image2.png)
