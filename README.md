@@ -37,13 +37,15 @@ To set up this CI/CD pipeline, the following tools and services were required:
 7. Prometheus & Grafana – Performance monitoring
 
 ## 2️⃣ Infrastructure Setup
-🔹 CI/CD Pipeline Flow:
-1️⃣ Developers push code to GitHub
-2️⃣ Jenkins triggers CI/CD pipeline
-3️⃣ Docker builds the image & pushes to Amazon ECR
-4️⃣ ArgoCD pulls the latest image & deploys to EKS
-5️⃣ Application is live on Kubernetes via ALB Ingress
-6️⃣ Monitoring & logging ensure system health
+
+🔹 **CI/CD Pipeline Flow**  
+- 1️⃣ Developers push code to GitHub  
+- 2️⃣ Jenkins triggers CI/CD pipeline  
+- 3️⃣ Docker builds the image & pushes to Amazon ECR  
+- 4️⃣ ArgoCD pulls the latest image & deploys to EKS  
+- 5️⃣ Application is live on Kubernetes via ALB Ingress  
+- 6️⃣ Monitoring & logging ensure system health  
+
 
 ## Infrastructure Setup Using Terraform
 1. **Clone the Repository** 
